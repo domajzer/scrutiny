@@ -1,0 +1,27 @@
+sections:
+  Basic info:
+    type: list
+    item_fields:
+      name: string
+      c2:
+        type: string
+        category: ordinal
+
+  javacard.framework.JCSystem:
+    type: list
+    item_fields:
+      name: string
+      c2:
+        type: string
+
+  javacardx.apdu.ExtendedLength:
+    type: list
+    item_fields:
+      name: string
+      c2: string
+
+  javacardx.crypto.Cipher:
+    type: list
+    item_fields:
+      name: string
+      c2: string

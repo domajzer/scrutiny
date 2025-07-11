@@ -1,0 +1,52 @@
+{
+  "Basic info": [
+    { "name": "AlgTest applet version", "c2": "1.2" },
+    { "name": "JavaCard support version", "c2": "2.2.2" }
+  ],
+  "javacard.framework.JCSystem": [
+    { "name": "JCSystem.getVersion()[Major.Minor]", "c2": "2.2" },
+    { "name": "JCSystem.isObjectDeletionSupported", "c2": "yes" },
+    { "name": "JCSystem.MEMORY_TYPE_PERSISTENT", "c2": ">32767B" },
+    { "name": "JCSystem.MEMORY_TYPE_TRANSIENT_RESET", "c2": "4878B" },
+    { "name": "JCSystem.MEMORY_TYPE_TRANSIENT_DESELECT", "c2": "4878B" },
+    { "name": "JCSystem.getMaxCommitCapacity()", "c2": "-" },
+    { "name": "APDU.getInBlockSize()", "c2": "-" },
+    { "name": "APDU.getOutBlockSize()", "c2": "-" },
+    { "name": "APDU.getProtocol()", "c2": "-" },
+    { "name": "APDU.getNAD()", "c2": "-" }
+  ],
+  "javacardx.apdu.ExtendedLength": [
+    { "name": "Extended APDU", "c2": "-" }
+  ],
+  "javacardx.crypto.Cipher": [
+    { "name": "ALG_DES_CBC_NOPAD", "c2": "yes" },
+    { "name": "ALG_DES_CBC_ISO9797_M1", "c2": "yes" },
+    { "name": "ALG_DES_CBC_ISO9797_M2", "c2": "yes" },
+    { "name": "ALG_DES_CBC_PKCS5", "c2": "no" },
+    { "name": "ALG_DES_ECB_NOPAD", "c2": "yes" },
+    { "name": "ALG_DES_ECB_ISO9797_M1", "c2": "yes" },
+    { "name": "ALG_DES_ECB_ISO9797_M2", "c2": "yes" },
+    { "name": "ALG_DES_ECB_PKCS5", "c2": "no" },
+    { "name": "ALG_RSA_ISO14888", "c2": "no" },
+    { "name": "ALG_RSA_PKCS1", "c2": "yes" },
+    { "name": "ALG_RSA_ISO9796", "c2": "no" },
+    { "name": "ALG_RSA_NOPAD", "c2": "yes" },
+    { "name": "ALG_AES_BLOCK_128_CBC_NOPAD", "c2": "yes" },
+    { "name": "ALG_AES_BLOCK_128_ECB_NOPAD", "c2": "yes" },
+    { "name": "ALG_RSA_PKCS1_OAEP", "c2": "no" },
+    { "name": "ALG_KOREAN_SEED_ECB_NOPAD", "c2": "yes" },
+    { "name": "ALG_KOREAN_SEED_CBC_NOPAD", "c2": "yes" },
+    { "name": "ALG_AES_BLOCK_192_CBC_NOPAD", "c2": "no" },
+    { "name": "ALG_AES_BLOCK_192_ECB_NOPAD", "c2": "no" },
+    { "name": "ALG_AES_BLOCK_256_CBC_NOPAD", "c2": "no" },
+    { "name": "ALG_AES_BLOCK_256_ECB_NOPAD", "c2": "no" },
+    { "name": "ALG_AES_CBC_ISO9797_M1", "c2": "no" },
+    { "name": "ALG_AES_CBC_ISO9797_M2", "c2": "no" },
+    { "name": "ALG_AES_CBC_PKCS5", "c2": "no" },
+    { "name": "ALG_AES_ECB_ISO9797_M1", "c2": "no" },
+    { "name": "ALG_AES_ECB_ISO9797_M2", "c2": "no" },
+    { "name": "ALG_AES_ECB_PKCS5", "c2": "no" },
+    { "name": "ALG_AES_CFB", "c2": "-" },
+    { "name": "ALG_AES_XTS", "c2": "-" }
+  ]
+}
