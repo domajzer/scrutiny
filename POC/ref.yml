@@ -6,6 +6,8 @@ sections:
       c2:
         type: string
         category: ordinal
+    report: "table"
+    threshold: 0.05
 
   javacard.framework.JCSystem:
     type: list
@@ -13,15 +15,18 @@ sections:
       name: string
       c2:
         type: string
+    report: "table"
 
   javacardx.apdu.ExtendedLength:
     type: list
     item_fields:
       name: string
       c2: string
+    report: "table"
 
   javacardx.crypto.Cipher:
     type: list
     item_fields:
       name: string
       c2: string
+    report: "table"
