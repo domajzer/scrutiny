@@ -42,9 +42,10 @@ class JsonParser:
                     raise TypeError(f"Entry #{idx} in '{section_name}' is not an object")
 
                 # Check each required field is present
-                for fname in field_defs:
-                    if fname not in entry:
-                        raise KeyError(f"Entry #{idx} in '{section_name}' missing field '{fname}'")
+                for fname, fdef in field_defs.items():
+                    is_required = True if not isinstance(fdef, dict) else fdef.get("required", True)
+                    if is_required and fname not in entry:
+                        raise KeyError(f"Entry #{idx} in '{section_name}' missing required field '{fname}'")
 
                 validated.append(entry)
 

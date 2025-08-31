@@ -1,32 +1,69 @@
+# ref.yml
 sections:
   Basic info:
     type: list
     item_fields:
-      name: string
+      name:
+        type: string
+        required: true
       c2:
         type: string
-        category: ordinal
-    report: "table"
-    threshold: 0.05
+        category: ordinal   
+        required: true
+    Report:
+      report: table
+    Component:
+      threshold: 16
+    metadata:
+      backend: schema
+      comparator: basic
+      key_field: name
+      threshold: 0.05
 
   javacard.framework.JCSystem:
     type: list
     item_fields:
-      name: string
-      c2:
+      name:
         type: string
-    report: "table"
+        required: true
+      c2:
+        type: string 
+        category: nominal
+        required: true
+    report: table
+    metadata:
+      backend: schema
+      comparator: basic
+      key_field: name
 
   javacardx.apdu.ExtendedLength:
     type: list
     item_fields:
-      name: string
-      c2: string
-    report: "table"
+      name:
+        type: string
+        required: true
+      c2:
+        type: string
+        category: nominal
+        required: true
+    report: table
+    metadata:
+      backend: schema
+      comparator: basic
+      key_field: name
 
   javacardx.crypto.Cipher:
     type: list
     item_fields:
-      name: string
-      c2: string
-    report: "table"
+      name:
+        type: string
+        required: true
+      c2:
+        type: string
+        category: nominal
+        required: true
+    report: table
+    metadata:
+      backend: schema
+      comparator: basic
+      key_field: name
