@@ -1,5 +1,3 @@
-# POC/comparator_basic.py
-
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
@@ -14,12 +12,9 @@ class BasicComparator:
       - schema:   { <section>: { 'fields' or 'item_fields': {...}, 'metadata': {...} } }
       - reference/tested: { <section>: [ {field: value, ...}, ... ] }
 
-    compare(key_field, metadata) -> { section: [DiffTuple, ...] }
-    compare_detailed(...) -> {
-        "diffs":   { section: [DiffTuple, ...] },
-        "matches": { section: [MatchTuple, ...] },   # if return_matches=True
-        "counts":  { section: {"compared":N,"changed":C,"matched":M,"only_ref":A,"only_test":B} }
-    }
+    Note: If metadata['threshold_ratio'] is in [0,1], it is also used as a
+    RELATIVE NUMERIC TOLERANCE for continuous/discrete fields:
+        abs(ref - test) / max(|test|, 1e-12) <= threshold_ratio  -> treated as MATCH
     """
 
     def __init__(self, schema: Dict[str, Dict[str, Any]],
@@ -35,12 +30,12 @@ class BasicComparator:
     def _norm_field_def(fdef: Any) -> Dict[str, Any]:
         """Normalize a field def that may be 'string' or a dict."""
         if isinstance(fdef, str):
-            return {"type": fdef, "category": "nominal", "required": True}
+            return {"type": fdef, "category": "nominal"}
         if isinstance(fdef, dict):
-            out = {"category": "nominal", "required": True}
+            out = {"category": "nominal"}
             out.update(fdef)
             return out
-        return {"type": "string", "category": "nominal", "required": True}
+        return {"type": "string", "category": "nominal"}
 
     @staticmethod
     def _num(val: Any):
@@ -57,7 +52,6 @@ class BasicComparator:
         return "<" if rv < tv else ">"
 
     def compare(self, key_field: str = "name", metadata: Dict[str, Any] | None = None) -> Dict[str, List[DiffTuple]]:
-        """Back-compat: return diffs only."""
         detailed = self.compare_detailed(key_field=key_field, metadata=metadata, return_matches=False)
         return detailed["diffs"]
 
@@ -71,7 +65,15 @@ class BasicComparator:
             fields = {fname: self._norm_field_def(fdef) for fname, fdef in fields_raw.items()}
 
             meta = (cfg.get("metadata") or {}) if metadata is None else (metadata or {})
-            tol_map: Dict[str, Dict[str, float]] = meta.get("tolerance", {}) or {}
+            # global relative numeric tolerance if in [0,1]
+            rel_tol_global = meta.get("threshold_ratio", None)
+            try:
+                rel_tol_global = float(rel_tol_global)
+                if not (0.0 <= rel_tol_global <= 1.0):
+                    rel_tol_global = None
+            except Exception:
+                rel_tol_global = None
+
             global_ordinal_order: List[Any] = meta.get("ordinal_order", []) or []
 
             ref_items = {e.get(key_field): e for e in self.ref_data.get(section, []) if isinstance(e, dict) and e.get(key_field) is not None}
@@ -97,7 +99,7 @@ class BasicComparator:
                         section_diffs.append((str(k), "__presence__", False, "!=", True))
                     continue
 
-                # Compare each declared field 
+                # Compare each declared field
                 for fname, fdef in fields.items():
                     if fname == key_field:
                         continue
@@ -106,7 +108,6 @@ class BasicComparator:
 
                     # Treat both None as equal; one None -> diff
                     if rv is None and tv is None:
-                        # consider matched (present field, equal None)
                         matched += 1
                         if return_matches:
                             section_matches.append((str(k), fname, None))
@@ -139,7 +140,6 @@ class BasicComparator:
                                 if return_matches:
                                     section_matches.append((str(k), fname, rv))
                         else:
-                            # fall back to nominal
                             changed += 1
                             section_diffs.append((str(k), fname, rv, "!=", tv))
                         continue
@@ -148,13 +148,11 @@ class BasicComparator:
                         ok_r, rf = self._num(rv)
                         ok_t, tf = self._num(tv)
                         if ok_r and ok_t:
-                            tol = tol_map.get(fname, {}) or {}
-                            abs_tol = tol.get("abs", None)
-                            rel_tol = tol.get("rel", None)
                             delta = abs(rf - tf)
-                            within_abs = isinstance(abs_tol, (int, float)) and delta <= float(abs_tol)
-                            within_rel = isinstance(rel_tol, (int, float)) and (abs(tf) > 0) and (delta / abs(tf) <= float(rel_tol))
-                            if within_abs or within_rel or rf == tf:
+                            denom = abs(tf) if abs(tf) > 1e-12 else 1.0
+                            within_rel = (rel_tol_global is not None) and (delta / denom <= rel_tol_global)
+
+                            if within_rel or rf == tf:
                                 matched += 1
                                 if return_matches:
                                     section_matches.append((str(k), fname, rf))
@@ -162,6 +160,7 @@ class BasicComparator:
                                 changed += 1
                                 section_diffs.append((str(k), fname, rf, self._num_op(rf, tf), tf))
                             continue
+
                         # numeric parse failed -> treat as nominal
                         changed += 1
                         section_diffs.append((str(k), fname, rv, "!=", tv))
@@ -171,7 +170,6 @@ class BasicComparator:
                     changed += 1
                     section_diffs.append((str(k), fname, rv, "!=", tv))
 
-                # Count how many fields we actually compared on this row
                 compared += max(0, len(fields) - (1 if key_field in fields else 0))
 
             diffs[section] = section_diffs

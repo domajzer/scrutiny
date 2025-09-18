@@ -1,69 +1,74 @@
-# ref.yml
+schema_version: "0.1"
+
+defaults:
+  data:
+    type: list
+  report:
+    types:
+      - table
+  component:
+    comparator: basic
+    match_key: card
+    include_matches: false
+    threshold_ratio: 0
+    threshold_count: 0
+  target: {}
+
 sections:
   Basic info:
-    type: list
-    item_fields:
-      name:
-        type: string
-        required: true
-      c2:
-        type: string
-        category: ordinal   
-        required: true
-    Report:
-      report: table
-    Component:
-      threshold: 16
-    metadata:
-      backend: schema
-      comparator: basic
-      key_field: name
-      threshold: 0.05
+    component:
+      match_key: label
+      threshold_ratio: null     # clears the default (explicitly unset)
+      threshold_count: null
+    data:
+      record_schema:
+        label:
+          dtype: string
+          required: true
+        value:
+          dtype: string
+          category: ordinal
+          required: true
 
   javacard.framework.JCSystem:
-    type: list
-    item_fields:
-      name:
-        type: string
-        required: true
-      c2:
-        type: string 
-        category: nominal
-        required: true
-    report: table
-    metadata:
-      backend: schema
-      comparator: basic
-      key_field: name
+    data:
+      record_schema:
+        label:
+          dtype: string
+          required: true
+        value:
+          dtype: string
+          category: nominal
+          required: true
+    report:
+      types:
+        - table
+    component:
+      match_key: label
 
   javacardx.apdu.ExtendedLength:
-    type: list
-    item_fields:
-      name:
-        type: string
-        required: true
-      c2:
-        type: string
-        category: nominal
-        required: true
-    report: table
-    metadata:
-      backend: schema
-      comparator: basic
-      key_field: name
+    data:
+      record_schema:
+        label:
+          dtype: string
+          required: true
+        value:
+          dtype: string
+          category: nominal
+          required: true
+    component:
+      match_key: label
 
   javacardx.crypto.Cipher:
-    type: list
-    item_fields:
-      name:
-        type: string
-        required: true
-      c2:
-        type: string
-        category: nominal
-        required: true
-    report: table
-    metadata:
-      backend: schema
-      comparator: basic
-      key_field: name
+    data:
+      record_schema:
+        label:
+          dtype: string
+          required: true
+        value:
+          dtype: string
+          category: nominal
+          required: true
+    component:
+      match_key: label
+      include_matches: true

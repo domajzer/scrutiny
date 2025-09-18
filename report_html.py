@@ -1,34 +1,14 @@
-# MIT License
-#
-# Copyright (c) 2020-2024 SCRUTINY developers
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
+# report_html.py
 import argparse
+import json
+import re
+import os 
 from datetime import datetime
 from dominate import document, tags
 from dominate.util import raw
-import jsonpickle
 
-from scrutiny.htmlutils import show_hide_div, show_all_button
-from scrutiny.htmlutils import hide_all_button, default_button
-from scrutiny.interfaces import ContrastState
+from scrutiny.htmlutils import show_hide_div, show_all_button, hide_all_button, default_button
+from scrutiny.interfaces import ContrastState  # used to keep your existing CSS classes/colors
 
 TOOLTIP_TEXT = {
     ContrastState.MATCH: "Devices seem to match",
@@ -38,41 +18,72 @@ TOOLTIP_TEXT = {
 
 RESULT_TEXT = {
     ContrastState.MATCH: lambda x:
-    "None of the modules raised suspicion during the verification process.",
+        "None of the modules raised suspicion during the verification process.",
     ContrastState.WARN: lambda x:
-    "There seem to be some differences worth checking. " + str(x) +
-    " module(s) report inconsistencies.",
+        f"There seem to be some differences worth checking. {x} module(s) report inconsistencies.",
     ContrastState.SUSPICIOUS: lambda x:
-    str(x) + " module(s) report suspicious differences between profiled and "
-    "reference devices. The verification process may have  been unsuccessful "
-    "and compared devices are different."
+        f"{x} module(s) report suspicious differences between profiled and reference devices. "
+        "The verification process may have been unsuccessful and compared devices are different."
 }
+
+def state_enum(s: str) -> ContrastState:
+    try:
+        return ContrastState[s]
+    except Exception:
+        return ContrastState.WARN
+
+def table(headers, rows):
+    t = tags.table(cls="report-table")
+    with t:
+        thead = tags.thead()
+        with thead:
+            tr = tags.tr()
+            for h in headers:
+                tags.th(h)
+        tbody = tags.tbody()
+        with tbody:
+            for r in rows:
+                tr = tags.tr()
+                for cell in r:
+                    tags.td("" if cell is None else str(cell))
+    return t
+
+_id_pat = re.compile(r"[^A-Za-z0-9_-]+")
+def safe_id(s: str) -> str:
+    return _id_pat.sub("_", s)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verification-profile",
-                        help="Input verification JSON profile",
-                        action="store", metavar="file",
-                        required=True)
+                        help="Input verification JSON produced by verify.py",
+                        action="store", metavar="file", required=True)
     parser.add_argument("-o", "--output-file",
-                        help="Name of output file",
+                        help="Name of output HTML",
                         action="store", metavar="outfile",
                         required=False, default="comparison.html")
     parser.add_argument("-e", "--exclude-style-and-scripts",
-                        help="Link CSS and JavaScript from report instead of "
-                             "inlining",
+                        help="Link CSS/JS instead of inlining",
                         action="store_true")
     args = parser.parse_args()
 
     with open("data/script.js", "r", encoding="utf-8") as js, \
-            open("data/style.css", "r", encoding="utf-8") as css:
+         open("data/style.css",  "r", encoding="utf-8") as css:
         script = "\n" + js.read() + "\n"
-        style = "\n" + css.read() + "\n"
+        style  = "\n" + css.read() + "\n"
 
-    with open(args.verification_profile, "r") as f:
-        contrast = jsonpickle.decode(f.read())
+    with open(args.verification_profile, "r", encoding="utf-8") as f:
+        report = json.load(f)
 
-    doc = document(title='Comparison of smart cards')
+    ref_name  = report.get("reference_name", "reference")
+    prof_name = report.get("profile_name", "profile")
+    overall_state = state_enum(report.get("overall", "WARN"))
+
+    suspicions = sum(
+        1 for s in report.get("sections", {}).values()
+        if state_enum(s.get("result", "WARN")).value >= ContrastState.WARN.value
+    )
+
+    doc = document(title="Comparison of smart cards")
 
     with doc.head:
         if args.exclude_style_and_scripts:
@@ -83,59 +94,75 @@ if __name__ == "__main__":
             tags.script(raw(script), type="text/javascript")
 
     with doc:
+        tags.button("Back to Top", onclick="backToTop()", id="topButton", cls="floatingbutton")
 
-        tags.button("Back to Top", onclick="backToTop()",
-                    id="topButton", cls="floatingbutton")
+        # Intro
         intro_div = tags.div(id="intro")
         with intro_div:
-            tags.h1(
-                "Verification of " + contrast.prof_name +
-                " against " + contrast.ref_name
-            )
-            tags.p("Generated on: " +
-                   datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
+            tags.h1(f"Verification of {prof_name} against {ref_name}")
+            tags.p("Generated on: " + datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
             tags.p("Generated from: " + args.verification_profile)
             tags.h2("Verification results")
             tags.h4("Ordered results from tested modules:")
 
-        worst_contrast_state = ContrastState.MATCH
-        suspicions = 0
-
+        # Dot legend / worst state
         with tags.div(id="modules"):
-            module_count: int = 0
-            for m in contrast.contrasts:
-
-                divname = m.module_name + str(module_count)
-
-                contrast_class = m.get_state()
-                if contrast_class.value > worst_contrast_state.value:
-                    worst_contrast_state = contrast_class
-
-                if contrast_class.value >= ContrastState.WARN.value:
-                    suspicions += 1
-
+            for section_name, sec in report.get("sections", {}).items():
+                state = state_enum(sec.get("result", "WARN"))
                 with intro_div:
-                    with tags.span(cls="dot " + contrast_class.name.lower()):
-                        tags.span(
-                            TOOLTIP_TEXT[contrast_class],
-                            cls="tooltiptext " + contrast_class.name.lower())
+                    with tags.span(cls="dot " + state.name.lower()):
+                        tags.span(TOOLTIP_TEXT[state], cls="tooltiptext " + state.name.lower())
 
-                m.project_html_intro()
-                module_div = show_hide_div(divname, hide=True)
-                with module_div:
-                    m.project_html(contrast.ref_name, contrast.prof_name)
+        # Sections
+        for idx, (section_name, sec) in enumerate(report.get("sections", {}).items()):
+            state = state_enum(sec.get("result", "WARN"))
+            divname = f"section_{idx}"
 
-                tags.br()
-                module_count += 1
+            # Section header + summary
+            tags.h2(f"{section_name} – {state.name}")
+            st = sec.get("stats", {})
+            stat_headers = ["diff_count", "compared", "changed", "matched", "only_ref", "only_test"]
+            tags.div(table(stat_headers, [[st.get(h, 0) for h in stat_headers]]))
+
+            # Diffs (collapsible)
+            diffs = sec.get("diffs", [])
+            if diffs:
+                diffs_div = show_hide_div(f"{divname}_diffs", hide=True)  # no title kwarg
+                with diffs_div:
+                    tags.h3("Diffs")
+                    headers = ["key", "field", "ref", "op", "test"]
+                    rows = [[d.get("key"), d.get("field"), d.get("ref"), d.get("op"), d.get("test")] for d in diffs]
+                    table(headers, rows)
+
+            # Matches by field (collapsible groups)
+            by_field = sec.get("by_field", {})
+            if by_field:
+                matches_root = show_hide_div(f"{divname}_matches", hide=True)  # no title kwarg
+                with matches_root:
+                    tags.h3("Matches by field")
+                    for field_name, grp in sorted(by_field.items(), key=lambda kv: kv[0]):
+                        sub = show_hide_div(f"{divname}_field_{safe_id(field_name)}", hide=True)
+                        with sub:
+                            tags.h4(field_name)
+                            gstats = grp.get("stats", {})
+                            tags.p(f"changed={gstats.get('changed',0)}, matched={gstats.get('matched',0)}, compared={gstats.get('compared',0)}")
+                            matches = grp.get("matches", [])
+                            if matches:
+                                headers = ["key", "value"]
+                                rows = [[m.get("key"), m.get("value")] for m in matches]
+                                table(headers, rows)
 
         with intro_div:
             tags.br()
-            tags.p(RESULT_TEXT[worst_contrast_state](suspicions))
-
+            tags.p(RESULT_TEXT[overall_state](suspicions))
             tags.h3("Quick visibility settings")
             show_all_button()
             hide_all_button()
             default_button()
 
-    with open(args.output_file, "w", encoding="utf-8") as f:
+    out_dir = "results"
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, os.path.basename(args.output_file))
+
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write(str(doc))
