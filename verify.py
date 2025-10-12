@@ -1,6 +1,8 @@
 import sys
 import argparse
 import json
+import os
+import subprocess
 
 from scrutiny.schemaloader import SchemaLoader
 from scrutiny.ingest import JsonParser
@@ -12,13 +14,13 @@ COMPARATORS = {
 }
 
 def compute_severity(meta: dict, changed: int, compared: int) -> str:
-    if changed == 0:
+    if compared == 0 or changed == 0:
         return "MATCH"
 
     thr_ratio = meta.get("threshold_ratio", None)
     thr_count = meta.get("threshold_count", None)
 
-    # normalize types (accept str/int/float/null)
+    # normalize
     if isinstance(thr_ratio, (int, float, str)):
         try:
             thr_ratio = float(thr_ratio)
@@ -30,30 +32,16 @@ def compute_severity(meta: dict, changed: int, compared: int) -> str:
         except Exception:
             thr_count = None
 
-    # ratio rule only if 0..1 and we compared something
     if isinstance(thr_ratio, float) and 0 <= thr_ratio <= 1 and compared > 0:
         ratio = changed / float(compared)
         return "SUSPICIOUS" if ratio >= float(thr_ratio) else "WARN"
 
-    # count rule only if >0 (treat 0 / None as disabled)
     if isinstance(thr_count, int) and thr_count > 0:
         return "SUSPICIOUS" if changed >= thr_count else "WARN"
 
     return "WARN"
 
 def _group_by_field(diffs_struct, matches_struct):
-    """
-    Build a per-field index:
-      {
-        <field>: {
-          "stats": { "changed": N, "matched": M, "compared": N+M },
-          "diffs":   [ ... ],
-          "matches": [ ... ],
-        },
-        ...
-      }
-    Presence-only diffs ("__presence__") are grouped under that key.
-    """
     out = {}
     def bucket(f):
         b = out.get(f)
@@ -67,7 +55,6 @@ def _group_by_field(diffs_struct, matches_struct):
         f = d.get("field", "__unknown__")
         b = bucket(f)
         b["diffs"].append(d)
-        # only count "normal" fields in compared
         if f != "__presence__":
             b["stats"]["changed"] += 1
             b["stats"]["compared"] += 1
@@ -91,12 +78,13 @@ def compare_schema_section(section: str, cfg: dict, data_ref: dict, data_tst: di
     fields_norm   = data.get("record_schema") or {}
     comp_key      = (component.get("comparator") or "basic").lower()
     match_key     = component["match_key"]
+    show_key      = component.get("show_key", match_key)
     want_match    = emit_matches or bool(component.get("include_matches", False))
 
-    # Metadata to pass into comparator and severity
     metadata = {
         "comparator": comp_key,
         "match_key": match_key,
+        "show_key": show_key,
         "include_matches": bool(component.get("include_matches", False)),
         "threshold_ratio": component.get("threshold_ratio", None),
         "threshold_count": component.get("threshold_count", None),
@@ -118,9 +106,13 @@ def compare_schema_section(section: str, cfg: dict, data_ref: dict, data_tst: di
 
     diffs   = detailed["diffs"].get(section, [])
     matches = detailed.get("matches", {}).get(section, []) if want_match else []
-    counts  = detailed["counts"].get(section, {"compared": 0, "changed": 0, "matched": 0, "only_ref": 0, "only_test": 0})
+    counts_field = detailed["counts"].get(section, {"compared": 0, "changed": 0, "matched": 0, "only_ref": 0, "only_test": 0})
+    counts_items = (detailed.get("counts_items") or {}).get(section, None)
+    labels       = (detailed.get("labels") or {}).get(section, {})
 
-    result_label = compute_severity(metadata, changed=counts["changed"], compared=counts["compared"])
+    # Use item-level counts for severity and display when available
+    display_counts = counts_items if counts_items else counts_field
+    result_label = compute_severity(metadata, changed=display_counts["changed"], compared=display_counts["compared"])
 
     diffs_struct = [
         {"key": n, "field": f, "ref": rv, "op": op, "test": tv}
@@ -131,24 +123,25 @@ def compare_schema_section(section: str, cfg: dict, data_ref: dict, data_tst: di
         for (n, f, v) in matches
     ] if want_match else []
 
-    # NEW: per-field grouping
     by_field = _group_by_field(diffs_struct, matches_struct)
 
     return {
         "comparator": comp_key,
         "result": result_label,
         "report": {"types": report.get("types", None)},
-        "stats": {
+        "stats": { 
             "diff_count": len(diffs),
-            "compared": counts["compared"],
-            "changed": counts["changed"],
-            "matched": counts["matched"],
-            "only_ref": counts["only_ref"],
-            "only_test": counts["only_test"],
+            "compared": counts_field["compared"],
+            "changed": counts_field["changed"],
+            "matched": counts_field["matched"],
+            "only_ref": counts_field["only_ref"],
+            "only_test": counts_field["only_test"],
         },
+        "stats_display": display_counts,  # << item-level when available
         "diffs": diffs_struct,
         **({"matches": matches_struct} if want_match else {}),
-        "by_field": by_field,   # <<<<<< added
+        "key_labels": labels,
+        "by_field": by_field,
     }
 
 def main():
@@ -164,6 +157,9 @@ def main():
                    help="Include matches in output JSON (and enable --print-matches)")
     p.add_argument("--print-matches", type=int, default=0, metavar="N",
                    help="Print up to N matches per section on console (default: 0)")
+    p.add_argument("-rep", "--report", action="store_true",
+               help="Create an HTML report (results/comparison.html) using report_html.py")
+
     args = p.parse_args()
 
     slog.setup_logging(args.verbose)
@@ -197,7 +193,9 @@ def main():
 
         mark = {"MATCH": "✓", "WARN": "⚠", "SUSPICIOUS": "✖"}[res["result"]]
         color_map = {"MATCH": "green", "WARN": "yellow", "SUSPICIOUS": "red"}
-        statline = f"{mark} {section}: {res['result']}  (diffs: {res['stats']['changed']}/{res['stats']['compared']})"
+
+        disp = res.get("stats_display") or res.get("stats") or {}
+        statline = f"{mark} {section}: {res['result']}  (diffs: {disp.get('changed',0)}/{disp.get('compared',0)})"
         slog.log_info(slog.c(statline, color_map[res["result"]]))
 
         to_print = min(args.print_diffs, len(res["diffs"])) if args.print_diffs and res["diffs"] else 0
@@ -206,7 +204,7 @@ def main():
             line = f"    • {d.get('key','')}.{d.get('field','')}: {d.get('ref','')} {d.get('op','!=')} {d.get('test','')}"
             slog.log_info(slog.c(line, "gray"))
 
-        if args.emit_matches and "matches" in res and args.print_matches:
+        if ("matches" in res) and (args.print_matches):
             mprint = min(args.print_matches, len(res["matches"]))
             for i in range(mprint):
                 m = res["matches"][i]
@@ -224,11 +222,32 @@ def main():
     slog.log_step("Writing output JSON:", args.output_file)
     with open(args.output_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
+
+    if args.report:
+        slog.log_ok("Generating HTML report")
+        report_script = os.path.join(os.path.dirname(__file__), "report_html.py")
+        if not os.path.exists(report_script):
+            report_script = "report_html.py"
+
+        try:
+            subprocess.run(
+                [sys.executable, report_script, "-v", args.output_file, "-o", "comparison.html"],
+                check=True
+            )
+            slog.log_ok("HTML report written to results/comparison.html")
+        except subprocess.CalledProcessError as e:
+            slog.log_err(f"Failed to build HTML report: {e}")
+        except Exception as e:
+            slog.log_err(f"Error while generating HTML report: {e}")
+    else:
+        slog.log_info("Report generation skipped (use -rep/--report to enable).")
+
     slog.log_ok("Done.")
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
+        from scrutiny import logging as slog
         slog.log_err(f"Error: {e}")
         sys.exit(1)

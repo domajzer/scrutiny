@@ -1,0 +1,43 @@
+schema_version: "0.11"
+
+defaults:
+  report:
+    types: ["table"]
+  component:
+    include_matches: true
+
+sections:
+  alg_performance:
+    data:
+      type: list
+      record_schema:
+        algorithm:
+          dtype: string
+          required: true
+        avg_ms:
+          dtype: number
+          category: continuous
+        min_ms:
+          dtype: number
+          category: continuous
+        max_ms:
+          dtype: number
+          category: continuous
+        error:
+          dtype: string
+        op_name:
+          dtype: string
+    report:
+      types: ["table"]
+    component:
+      comparator: algperf
+      match_key: algorithm
+      threshold_ratio: 0.20
+      show_key: op_name
+    target:
+      skip_le_ms: 2.0
+      small_cap_ms: 10.0
+      span_factor: 1.0
+      rel_tol: 0.15
+      skip_name_patterns: ["clearKey()"]
+      include_skipped: true

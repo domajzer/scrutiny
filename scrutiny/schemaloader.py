@@ -5,7 +5,7 @@ from copy import deepcopy
 from scrutiny import logging as slog
 
 _ALLOWED_CATEGORIES = {"ordinal", "nominal", "continuous", "binary", "set"}
-_SUPPORTED_SCHEMA_VERSIONS = {"0.1"}
+_SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.11"}
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -25,13 +25,13 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 class SchemaLoader:
     """
     Loads a YAML schema with:
-      schema_version: "0.1"
+      schema_version: "0.1" | "0.11"
       defaults: { data:..., report:..., component:..., target:... }
       sections:
         <name>:
           data: { type: list, record_schema: {...} }
           report: { types: "table,bar" | ["table","bar"] | null }
-          component: { comparator, match_key, include_matches?, threshold_ratio?, threshold_count? }
+          component: { comparator, match_key, show_key?, include_matches?, threshold_ratio?, threshold_count? }
           target: {}
     """
 
@@ -86,7 +86,6 @@ class SchemaLoader:
         return None
 
     def _normalize_defaults(self, defaults: Dict[str, Any]) -> Dict[str, Any]:
-        # Minimal normalization; sections will still validate specifics.
         data = defaults.get("data", {}) or {}
         if data.get("type") and data["type"] != "list":
             self._warn_or_raise("defaults.data.type must be 'list' if provided.", fatal=True)
@@ -103,6 +102,7 @@ class SchemaLoader:
             "component": {
                 "comparator": comp.get("comparator"),
                 "match_key": comp.get("match_key"),
+                "show_key": comp.get("show_key"),  # optional
                 "include_matches": bool(comp.get("include_matches", False)),
                 "threshold_ratio": comp.get("threshold_ratio"),
                 "threshold_count": comp.get("threshold_count"),
@@ -114,7 +114,6 @@ class SchemaLoader:
         with open(self.yaml_path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
-        # --- schema version ---
         version = str(raw.get("schema_version", "")).strip()
         if version not in _SUPPORTED_SCHEMA_VERSIONS:
             self._warn_or_raise(
@@ -123,7 +122,6 @@ class SchemaLoader:
                 fatal=True
             )
 
-        # --- defaults ---
         defaults_norm = self._normalize_defaults(raw.get("defaults", {}) or {})
         sections_raw = raw.get("sections") or {}
         if not isinstance(sections_raw, dict) or not sections_raw:
@@ -135,12 +133,11 @@ class SchemaLoader:
             if not isinstance(section_cfg, dict):
                 self._warn_or_raise(f"Section '{section_name}' must be a mapping.", fatal=True)
 
-            # merge defaults → section for each bucket
             merged = {}
             for bucket in ("data", "report", "component", "target"):
                 merged[bucket] = _deep_merge(defaults_norm.get(bucket, {}), section_cfg.get(bucket, {}))
 
-            # --- normalize data ---
+            # --- data ---
             data_cfg = merged["data"] or {}
             if data_cfg.get("type") != "list":
                 self._warn_or_raise(f"Section '{section_name}': data.type must be 'list'.", fatal=True)
@@ -150,16 +147,13 @@ class SchemaLoader:
                 self._warn_or_raise(f"Section '{section_name}': data.record_schema must be a non-empty map.", fatal=True)
             record_schema_norm = self._normalize_record_schema(record_schema, section_name)
 
-            data = {
-                "type": "list",
-                "record_schema": record_schema_norm,
-            }
+            data = {"type": "list", "record_schema": record_schema_norm}
 
-            # --- normalize report ---
+            # --- report ---
             report_types = self._parse_report_types(merged["report"].get("types"), section_name)
             report = {"types": report_types} if report_types is not None else {"types": None}
 
-            # --- normalize component ---
+            # --- component ---
             comp_cfg = merged["component"] or {}
             comparator = (comp_cfg.get("comparator") or "").strip().lower()
             if not comparator:
@@ -168,22 +162,29 @@ class SchemaLoader:
             match_key = comp_cfg.get("match_key", None)
             if not match_key:
                 self._warn_or_raise(f"Section '{section_name}': component.match_key is mandatory.", fatal=True)
-
             if match_key not in record_schema_norm:
                 self._warn_or_raise(
                     f"Section '{section_name}': component.match_key '{match_key}' must exist in data.record_schema.",
                     fatal=True
                 )
 
+            show_key = comp_cfg.get("show_key", None)
+            if show_key is not None and show_key not in record_schema_norm:
+                self._warn_or_raise(
+                    f"Section '{section_name}': component.show_key '{show_key}' not in data.record_schema; falling back to match_key '{match_key}'.",
+                    fatal=False
+                )
+                show_key = None
+
             component = {
                 "comparator": comparator,
                 "match_key": match_key,
+                "show_key": show_key,  # may be None; runtime fallback to match_key
                 "include_matches": bool(comp_cfg.get("include_matches", False)),
                 "threshold_ratio": comp_cfg.get("threshold_ratio", None),
                 "threshold_count": comp_cfg.get("threshold_count", None),
             }
 
-            # --- target (free-form, merged) ---
             target = merged["target"] or {}
 
             out[section_name] = {
