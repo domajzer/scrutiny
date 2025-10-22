@@ -7,10 +7,12 @@ import subprocess
 from scrutiny.schemaloader import SchemaLoader
 from scrutiny.ingest import JsonParser
 from scrutiny.javacard.modules.comparator_basic import BasicComparator
+from scrutiny.javacard.modules.algperf_comparator import AlgPerfComparator
 from scrutiny import logging as slog
 
 COMPARATORS = {
     "basic": BasicComparator,
+    "algperf": AlgPerfComparator,
 }
 
 def compute_severity(meta: dict, changed: int, compared: int) -> str:
@@ -20,7 +22,6 @@ def compute_severity(meta: dict, changed: int, compared: int) -> str:
     thr_ratio = meta.get("threshold_ratio", None)
     thr_count = meta.get("threshold_count", None)
 
-    # normalize
     if isinstance(thr_ratio, (int, float, str)):
         try:
             thr_ratio = float(thr_ratio)
@@ -109,8 +110,8 @@ def compare_schema_section(section: str, cfg: dict, data_ref: dict, data_tst: di
     counts_field = detailed["counts"].get(section, {"compared": 0, "changed": 0, "matched": 0, "only_ref": 0, "only_test": 0})
     counts_items = (detailed.get("counts_items") or {}).get(section, None)
     labels       = (detailed.get("labels") or {}).get(section, {})
+    chart_rows   = (detailed.get("chart") or {}).get(section, [])  # <-- added
 
-    # Use item-level counts for severity and display when available
     display_counts = counts_items if counts_items else counts_field
     result_label = compute_severity(metadata, changed=display_counts["changed"], compared=display_counts["compared"])
 
@@ -125,11 +126,16 @@ def compare_schema_section(section: str, cfg: dict, data_ref: dict, data_tst: di
 
     by_field = _group_by_field(diffs_struct, matches_struct)
 
+    report_cfg = {"types": report.get("types", None)}
+    for k, v in report.items():
+        if k != "types":
+            report_cfg[k] = v
+
     return {
         "comparator": comp_key,
         "result": result_label,
-        "report": {"types": report.get("types", None)},
-        "stats": { 
+        "report": report_cfg,
+        "stats": {
             "diff_count": len(diffs),
             "compared": counts_field["compared"],
             "changed": counts_field["changed"],
@@ -137,11 +143,12 @@ def compare_schema_section(section: str, cfg: dict, data_ref: dict, data_tst: di
             "only_ref": counts_field["only_ref"],
             "only_test": counts_field["only_test"],
         },
-        "stats_display": display_counts,  # << item-level when available
+        "stats_display": display_counts,  
         "diffs": diffs_struct,
         **({"matches": matches_struct} if want_match else {}),
         "key_labels": labels,
         "by_field": by_field,
+        "chart_rows": chart_rows, 
     }
 
 def main():
@@ -162,6 +169,7 @@ def main():
 
     args = p.parse_args()
 
+    from scrutiny import logging as slog
     slog.setup_logging(args.verbose)
 
     slog.log_step("Loading schema:", args.schema)

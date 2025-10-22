@@ -4,9 +4,10 @@ import json
 import re
 import os
 from datetime import datetime
-from typing import Dict, Any, List, Iterable
+from typing import Dict, Any, List, Iterable, Optional
 from dominate import document, tags
 from dominate.util import raw
+import html 
 
 from scrutiny.htmlutils import show_hide_div, show_all_button, hide_all_button, default_button
 from scrutiny.interfaces import ContrastState 
@@ -31,9 +32,6 @@ def safe_id(s: str) -> str:
     return _id_pat.sub("_", s)
 
 def table(headers: Iterable[str], rows: Iterable[Iterable[Any]]):
-    """
-    Cells may be plain values or Dominate nodes (e.g., badges).
-    """
     t = tags.table(cls="report-table")
     with t:
         thead = tags.thead()
@@ -124,12 +122,6 @@ def pair_group_changes(removed: List[Dict[str, Any]], added: List[Dict[str, Any]
     return out
 
 def format_group_value(v: Any) -> tags.span:
-    """
-    Pretty print a group (set-mode) match payload that can be:
-      - dict of field -> value | [values]
-      - list/tuple/set of values
-      - None
-    """
     if v is None:
         return tags.span("matched", cls="badge badge-ok")
     if isinstance(v, dict):
@@ -217,7 +209,180 @@ def extract_buckets_for_report(section: Dict[str, Any]) -> Dict[str, Any]:
         "extra_rows": sorted(extra_rows, key=lambda x: x[0]),
     }
 
-# ---- module card ----
+def _num(x: Any) -> Optional[float]:
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+def _render_chart_svg(section_name: str, section: Dict[str, Any], idx: int):
+    """
+    Draw a simple paired horizontal bar chart for rows that have numeric ref/test averages.
+    Uses inline SVG emitted as a raw string (no dominate.svg dependency).
+    """
+    rows = section.get("chart_rows") or []
+    if not rows:
+        return
+
+    rpt = (section.get("report") or {})
+    xlab = rpt.get("x_axis") or "Reference avg (ms)"
+    ylab = rpt.get("y_axis") or "Profile avg (ms)"
+
+    def _num(x):
+        try:
+            return float(x)
+        except Exception:
+            return None
+
+    data = []
+    for r in rows:
+        ra = _num(r.get("ref_avg"))
+        ta = _num(r.get("test_avg"))
+        if ra is None or ta is None:
+            continue
+        label = r.get("key", "")
+        status = r.get("status", "")
+        data.append((label, ra, ta, status))
+
+    if not data:
+        return
+
+    # Layout constants
+    left_pad   = 220       # space for algorithm labels
+    right_pad  = 30
+    top_pad    = 30
+    bar_h      = 14
+    gap        = 10        # gap between paired bars (same algorithm)
+    row_gap    = 18        # gap between algorithms
+    pair_h     = bar_h * 2 + gap
+    chart_w    = 900
+    chart_h    = top_pad + len(data) * (pair_h + row_gap) + 40
+
+    # Scaling
+    max_val = max(max(ra, ta) for _, ra, ta, _ in data)
+    if max_val <= 0:
+        max_val = 1.0
+    scale = (chart_w - left_pad - right_pad) / max_val
+
+    # Colors
+    col_ref  = "#6baed6"   # blue-ish
+    col_tst  = "#31a354"   # green-ish
+    col_axes = "#555"
+
+    # Build SVG as a string
+    svg_id = f"svg_chart_{safe_id(section_name)}_{idx}"
+    parts = []
+    parts.append(
+        f'<svg id="{svg_id}" width="{chart_w}" height="{chart_h}" '
+        f'style="max-width:100%;height:auto;border:1px solid #eee;background:#fff">'
+    )
+
+    # Axis label
+    parts.append(
+        f'<text x="{left_pad}" y="20" fill="{col_axes}" font-size="12">'
+        f'{html.escape(xlab)} / {html.escape(ylab)}</text>'
+    )
+
+    # X ticks (0, 25%, 50%, 75%, 100%)
+    for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+        val = max_val * frac
+        x = left_pad + val * scale
+        parts.append(
+            f'<line x1="{x:.2f}" y1="{top_pad-5}" x2="{x:.2f}" y2="{chart_h-20}" stroke="#f0f0f0"/>'
+        )
+        parts.append(
+            f'<text x="{x:.2f}" y="{top_pad-10}" fill="{col_axes}" font-size="10" text-anchor="middle">{val:.2f}</text>'
+        )
+
+    # Bars + labels
+    y = top_pad
+    for (label, ra, ta, status) in data:
+        elabel = html.escape(str(label))
+        # Left-side label (vertically centered between the two bars)
+        parts.append(
+            f'<text x="10" y="{y + bar_h + gap/2:.2f}" fill="{col_axes}" font-size="12">{elabel}</text>'
+        )
+        # Reference bar
+        w_ref = max(0.0, ra * scale)
+        parts.append(
+            f'<rect x="{left_pad}" y="{y}" width="{w_ref:.2f}" height="{bar_h}" fill="{col_ref}" opacity="0.9" />'
+        )
+        # Profile bar
+        w_tst = max(0.0, ta * scale)
+        parts.append(
+            f'<rect x="{left_pad}" y="{y + bar_h + gap:.2f}" width="{w_tst:.2f}" height="{bar_h}" fill="{col_tst}" opacity="0.9" />'
+        )
+        # Values
+        parts.append(
+            f'<text x="{left_pad + w_ref + 4:.2f}" y="{y + bar_h - 2}" fill="{col_axes}" font-size="10">{ra:.2f} ms</text>'
+        )
+        parts.append(
+            f'<text x="{left_pad + w_tst + 4:.2f}" y="{y + 2*bar_h + gap - 2:.2f}" fill="{col_axes}" font-size="10">{ta:.2f} ms</text>'
+        )
+        # Optional status hint at far right
+        if status in {"mismatch", "skipped"}:
+            parts.append(
+                f'<text x="{chart_w - right_pad}" y="{y + bar_h}" fill="#888" font-size="10" text-anchor="end">{html.escape(status)}</text>'
+            )
+
+        y += pair_h + row_gap
+
+    # Legend
+    leg_y = chart_h - 18
+    parts.append(f'<rect x="{left_pad}" y="{leg_y-10}" width="10" height="10" fill="{col_ref}" />')
+    parts.append(f'<text x="{left_pad + 16}" y="{leg_y-2}" fill="{col_axes}" font-size="11">Reference</text>')
+    parts.append(f'<rect x="{left_pad + 100}" y="{leg_y-10}" width="10" height="10" fill="{col_tst}" />')
+    parts.append(f'<text x="{left_pad + 116}" y="{leg_y-2}" fill="{col_axes}" font-size="11">Profile</text>')
+
+    parts.append('</svg>')
+    svg_markup = "".join(parts)
+
+    # Wrap in a collapsible block; add a small hint above
+    cdiv = show_hide_div(f"section_{idx}_chart_svg", hide=False)
+    with cdiv:
+        tags.h3("Chart: Reference vs Profile (bar chart)")
+        tags.p("Each algorithm shows two bars: reference (blue) and profile (green). "
+               "Length = avg time (ms); shorter is faster.", cls="hint")
+        # Inject raw SVG
+        tags.div().add(raw(svg_markup))
+
+def _render_chart_table(section_name: str, section: Dict[str, Any], idx: int):
+    rows = section.get("chart_rows") or []
+    if not rows:
+        return
+
+    rpt = (section.get("report") or {})
+    xlab = rpt.get("x_axis") or "Reference avg (ms)"
+    ylab = rpt.get("y_axis") or "Profile avg (ms)"
+
+    divname = f"section_{idx}_chart"
+    cdiv = show_hide_div(divname, hide=False)
+    with cdiv:
+        tags.h3("Chart: Reference vs Profile (table view)")
+        tags.p("Δ% is (Profile - Reference) / Reference × 100. Rows marked 'skipped' follow the fast-op rules; "
+               "'error' rows indicate both sides failed; 'error_mismatch' indicates different errors.", cls="hint")
+
+        def fmt(v, digits=2):
+            if v is None: return ""
+            try:
+                return f"{float(v):.{digits}f}"
+            except Exception:
+                return str(v)
+
+        hdrs = ["Algorithm", xlab, ylab, "Δ ms", "Δ %", "Status", "Note"]
+        body = []
+        for r in rows:
+            body.append([
+                r.get("key", ""),
+                fmt(r.get("ref_avg")),
+                fmt(r.get("test_avg")),
+                fmt(r.get("delta_ms")),
+                fmt(r.get("delta_pct")),
+                r.get("status", ""),
+                r.get("note", ""),
+            ])
+        table(hdrs, body)
+
 
 def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
     state = state_enum(section.get("result", "WARN"))
@@ -233,6 +398,10 @@ def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
 
     types = (section.get("report", {}) or {}).get("types")
     types = {t.lower() for t in types} if types else {"table"}
+
+    if "chart" in types:
+        _render_chart_svg(section_name, section, idx)
+        _render_chart_table(section_name, section, idx)
 
     buckets = extract_buckets_for_report(section) if "table" in types else {
         "boolean_rows": [], "string_rows": [], "string_include_field": False,
@@ -265,7 +434,6 @@ def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
             tags.h3("Extra on profile (absent in reference)")
             table(["Item", "Detail"], buckets["extra_rows"])
 
-    # Optional Matches if present
     if section.get("matches"):
         mv = show_hide_div(f"{divname}_matches", hide=True)
         with mv:
@@ -288,8 +456,6 @@ def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
             table(["Item", "Field", "Value"], rows)
 
     tags.hr()
-
-# ---- main ----
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

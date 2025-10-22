@@ -60,16 +60,10 @@ defaults:
     include_matches: true
 
   report:
-    types: ["table"]
-
-  target:
-    skip_le_ms: 2.0
-    small_cap_ms: 10.0
-    span_factor: 1.0
-    rel_tol: 0.15
-    skip_name_patterns: ["clearKey\\(\\)"]
-    include_skipped: true
+    types: ["chart", "table"]   
+    x_axis: "Reference avg (ms)"
+    y_axis: "Profile avg (ms)"
 
 sections:
-  "MESSAGE_DIGEST": {}
-  "RANDOM_GENERATOR": {}
+  MESSAGE_DIGEST: {}
+  RANDOM_GENERATOR: {}
