@@ -4,11 +4,11 @@ defaults:
   data:
     type: list
     record_schema:
-      name: 
+      name:
         dtype: string
         required: true
         category: nominal
-      value: 
+      value:
         dtype: string
         category: binary
   report:

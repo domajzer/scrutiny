@@ -221,3 +221,7 @@ h2 {
 .badge-warn    { background:#fff5cc; color:#7a5900; border-color:#f2d98c; }
 
 /* Gallery end */ 
+
+.bar-ref { fill: #8aa; }
+.bar-test { fill: #557; }
+.chart-label, .bar-value, .legend-text { font-size: 13px; }
