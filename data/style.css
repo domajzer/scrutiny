@@ -1,28 +1,36 @@
 :root {
   --main-color: #193441;
   --green-color:#4CAF50;
-  --yellow-color:#d3d03e;
+  --yellow-color:#c9b400;     /* darker for better contrast */
   --orange-color:#d3923e;
   --red-color:#c04444;
-}
 
-div {
-  margin-top: 2px;
-  border: 3px #ffffff;
-  border-style: solid solid solid solid;
-  padding: 10px 25px;
-  background-color: #eff3f591;
+  /* spacing scale */
+  --space-1: 8px;
+  --space-2: 12px;
+  --space-3: 16px;
+  --space-4: 24px;
 }
 
 body {
-  max-width: 90%;
-	margin: 50px 5%;
+  max-width: min(1400px, 96vw);
+  margin: 32px auto;
   font-family:Verdana, Geneva, Tahoma, sans-serif;
-  color: #193441;
+  color: var(--main-color);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* A light card background for all content blocks */
+div {
+  margin-top: 2px;
+  border: 3px #ffffff;
+  border-style: solid;
+  padding: 10px 25px;
+  background-color: #eff3f591;
+}
+
+/* Basic table styles */
 table {
   border: solid 3px #ffffff;
   border-collapse: collapse;
@@ -33,8 +41,9 @@ th, td {
   padding: 5px 10px;
 }
 
+/* Buttons + floating "back to top" */
 button {
-  background-color: #4CAF50; /* Green */
+  background-color: #4CAF50;
   border: none;
   border-radius: 50px;
   color: white;
@@ -45,43 +54,30 @@ button {
   font-size: 16px;
 }
 
-button:hover {
-  border: none;
-  background-color: #3e9b41;
-}
+button:hover { background-color: #3e9b41; }
+button:focus { outline: none; }
 
-button:focus {
-  outline: none;
-}
-
-/* Based on https://www.w3schools.com/howto/howto_js_scroll_to_top.asp */
 .floatingbutton {
-  display: none; /* Displayed by default for browsers with iffy onscroll support */
+  display: none;
   position: fixed;
   bottom: 20px;
   right: 30px;
   z-index: 99;
 }
 
-h1 {
-  display: inline-block;
-}
+/* Headings */
+h1 { display: inline-block; }
+h2 { vertical-align: middle; display: inline-block; }
 
-h2 {
-  vertical-align: middle;
-  display: inline-block;
-}
-
+/* Status dots + tooltips */
 .dot {
   height: 20px;
   width: 20px;
   border-radius: 50%;
   display: inline-block;
+  position: relative;
 }
-
-.dot:hover .tooltiptext {
-  visibility: visible;
-}
+.dot:hover .tooltiptext { visibility: visible; }
 
 .tooltiptext {
   visibility: hidden;
@@ -91,122 +87,15 @@ h2 {
   position: absolute;
   z-index: 1;
   margin-top: -35px;
+  background: rgba(0,0,0,0.7);
+  white-space: nowrap;
 }
 
-.match {
-  background-color: var(--green-color);
-}
+.match      { background-color: var(--green-color); }
+.warn       { background-color: var(--yellow-color); color: #193441; }
+.suspicious { background-color: var(--red-color); }
 
-.warn {
-  background-color: var(--yellow-color);
-  color: #193441;
-}
-
-.suspicious {
-  background-color: var(--red-color);
-}
-
-/* Piechart tooltip */
-
-.piechart:hover .pietooltiptext {
-  visibility: visible;
-}
-
-.pietooltiptext {
-  visibility: hidden;
-  color: #fff;
-  background-color: rgb(25, 52, 65, 0.75);
-  padding: 5px 10px;
-  border-radius: 6px;
-  position: absolute;
-  z-index: 1;
-  top: -5px;
-  left: 105%;
-}
-
-/* End piechart tooltip */
-
-/* Gallery */
-
-/* The grid: Four equal columns that floats next to each other */
-.column {
-  float: left;
-  width: 25%;
-  padding: 10px;
-}
-
-.circle {
-  width: 35px;
-  height: 35px;
-  display: inline-block;
-  border-radius: 50%;
-  background: black;
-  color: #f6f8f9;
-  line-height: 35px;
-  vertical-align: middle;
-  text-align: center;
-  font-size: 1em;
-  margin: 0px;
-  padding: 0px;
-}
-
-/* Style the images inside the grid */
-.column img {
-  opacity: 0.8; 
-  cursor: pointer; 
-}
-
-.column img:hover {
-  opacity: 1;
-}
-
-/* Clear floats after the columns */
-.row:after {
-  content: "";
-  display: table;
-  clear: both;
-}
-
-/* The expanding image container */
-.container {
-  margin-top: 0px;
-  border: 0px #ffffff;
-  border-style: solid solid solid solid;
-  padding: 5px 5px;
-  background-color: #eff3f591;
-  position: relative;
-  display: none;
-}
-
-.container-common {
-  margin-top: 0px;
-  border: 0px #ffffff;
-  border-style: solid solid solid solid;
-  padding: 5px 5px;
-  background-color: #eff3f591;
-  position: relative;
-}
-
-/* Expanding image text */
-#imgtext {
-  position: absolute;
-  bottom: 15px;
-  left: 15px;
-  color: white;
-  font-size: 20px;
-}
-
-/* Closable button inside the expanded image */
-.closebtn {
-  position: absolute;
-  right: 20px;
-  top: 15px;
-  color: black;
-  font-size: 30px;
-  cursor: pointer;
-}
-
-/* badges (boolean cells) */
+/* Badges for boolean cells */
 .badge {
   display:inline-block;
   padding:2px 8px;
@@ -215,13 +104,85 @@ h2 {
   font-weight:600;
   border:1px solid transparent;
 }
-.badge-ok      { background:#dff5e1; color:#216e39; border-color:#9dd7a5; }   /* green */
-.badge-bad     { background:#fde2e2; color:#b91c1c; border-color:#f5a9a9; }   /* red   */
-.badge-neutral { background:#e5e7eb; color:#374151; border-color:#d1d5db; }   /* gray  */
+.badge-ok      { background:#dff5e1; color:#216e39; border-color:#9dd7a5; }
+.badge-bad     { background:#fde2e2; color:#b91c1c; border-color:#f5a9a9; }
+.badge-neutral { background:#e5e7eb; color:#374151; border-color:#d1d5db; }
 .badge-warn    { background:#fff5cc; color:#7a5900; border-color:#f2d98c; }
 
-/* Gallery end */ 
-
+/* Chart text */
 .bar-ref { fill: #8aa; }
 .bar-test { fill: #557; }
 .chart-label, .bar-value, .legend-text { font-size: 13px; }
+
+/* Radar styling & responsiveness */
+.radar-container { max-width: 900px; width: 100%; margin: 0 auto; }
+.radar-grid        { stroke: #ccc; fill: none; }
+.radar-axis        { stroke: #ddd; }
+.radar-grid-label  { font-size: 10px; fill: #777; }
+.radar-label       { font-size: 11px; fill: #333; }
+.radar-ref         { fill: rgba(80,130,200,0.35); stroke: rgba(80,130,200,0.9); }
+.radar-test        { fill: rgba(40,60,120,0.25); stroke: rgba(40,60,120,0.85); }
+.radar-legend      { font-size: 12px; fill: #333; }
+
+/* Intro layout */
+.intro-grid{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap: var(--space-3);
+}
+.intro-left{ flex:1 1 auto; min-width:520px; }
+.intro-right{
+  flex: 0 0 600px;         /* fixed column so cards align */
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  gap: var(--space-3);
+}
+
+/* Donut cards: title | donut | legend (fixed columns) */
+.donut-card{
+  width: 100%;
+  display: grid;
+  grid-template-columns: 160px 230px 200px;  /* title | chart | legend */
+  align-items: center;
+  gap: var(--space-2);
+  padding: 14px 16px;
+  background:#fff;
+  border:1px solid #e9e9e9;
+  border-radius:12px;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);
+  min-height: 140px;
+}
+.donut-title{ font-weight:600; justify-self:start; }
+.donut-wrap{ display:flex; justify-content:center; }
+.donut-wrap svg{ display:block; }
+.donut-legend{ display:flex; flex-direction:column; gap:6px; width: 200px; }
+.donut-stack{ display:flex; flex-direction:column; gap: var(--space-2); }
+.legend-row{ display:flex; align-items:center; gap:8px; }
+.legend-swatch{ width:10px; height:10px; border-radius:50%; }
+.legend-text{ font-size:12px; color:#555; }
+
+/* KPI tiles under donuts */
+.kpi-row { display:flex; gap: var(--space-2); }
+.kpi {
+  flex: 1;
+  background:#fff;
+  border:1px solid #e9e9e9;
+  border-radius:12px;
+  padding: 10px 12px;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);
+}
+.kpi-title { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color:#555; margin-bottom: 4px; }
+.kpi-value { font-size: 20px; font-weight: 700; }
+
+/* Responsive breakpoint: stack intro columns on narrower screens */
+@media (max-width: 1100px) {
+  .intro-grid { flex-direction: column; }
+  .intro-right { flex: 1 1 auto; }
+}
+
+/* Slight bump for larger monitors: widen columns a bit */
+@media (min-width: 1600px) {
+  .donut-card { grid-template-columns: 190px 260px 220px; }
+}

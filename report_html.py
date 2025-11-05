@@ -1,18 +1,34 @@
-# report_html.py
+# --------------------------------------------
+# PURPOSE
+# - Build a self-contained HTML report from a verification JSON.
+# - Uses modular visualizations from scrutiny.reporting.viz.*
+# - Layout parts:
+#     1) Intro (left = text & navigation, right = overview donuts + KPIs)
+#     2) Per-module cards (viz + tables + optional extras)
+# --------------------------------------------
+
 import argparse
 import json
-import re
 import os
+import re
 from datetime import datetime
-from typing import Dict, Any, List, Iterable, Optional
+from typing import Any, Dict, Iterable, List
+
 from dominate import document, tags
 from dominate.util import raw
-import html 
 
 from scrutiny.htmlutils import show_hide_div, show_all_button, hide_all_button, default_button
 from scrutiny.interfaces import ContrastState
+
+# Modular viz
 from scrutiny.reporting.viz.table import render_table_block
-from scrutiny.reporting.viz.chart import render_bar_pair_block, render_chart_table_block 
+from scrutiny.reporting.viz.chart import render_bar_pair_block, render_chart_table_block
+from scrutiny.reporting.viz.radar import render_radar_block
+from scrutiny.reporting.viz.donut import render_donut_block
+
+# ----------------------------
+# Texts & small helpers
+# ----------------------------
 
 TOOLTIP_TEXT = {
     ContrastState.MATCH: "Devices seem to match",
@@ -33,19 +49,23 @@ _id_pat = re.compile(r"[^A-Za-z0-9_-]+")
 def safe_id(s: str) -> str:
     return _id_pat.sub("_", s)
 
-def table(headers: Iterable[str], rows: Iterable[Iterable[Any]]):
-            # Delegated to viz.table
-        return render_table_block(headers, rows)
-
 def state_enum(s: str) -> ContrastState:
     try:
         return ContrastState[s]
     except Exception:
         return ContrastState.WARN
 
-def render_status_dot(state: ContrastState):
-    with tags.span(cls="dot " + state.name.lower()):
-        tags.span(TOOLTIP_TEXT[state], cls="tooltiptext " + state.name.lower())
+def render_status_dot_link(*, section_name: str, state: ContrastState, target_id: str):
+    """
+    Clickable status dot used in the intro strip:
+      - hover shows module name
+      - click jumps to the module card
+    """
+    with tags.a(cls="dot " + state.name.lower(), href=f"#{target_id}", title=section_name):
+        tags.span(section_name, cls="tooltiptext " + state.name.lower())
+
+def table(headers: Iterable[str], rows: Iterable[Iterable[Any]]):
+    return render_table_block(headers, rows)
 
 def badge(text: str, kind: str) -> tags.span:
     return tags.span(text, cls=f"badge badge-{kind}")
@@ -64,17 +84,35 @@ def display_key(raw_key: Any, labels: Dict[str, str]) -> str:
     except Exception:
         return str(raw_key)
 
-def fast_summary(stats: Dict[str, Any]) -> str:
-    compared  = int(stats.get("compared", 0))
-    changed   = int(stats.get("changed", 0))
-    only_ref  = int(stats.get("only_ref", 0))
-    only_test = int(stats.get("only_test", 0))
+def fast_summary(stats_or_counts: Dict[str, Any]) -> str:
+    s = stats_or_counts or {}
+    compared  = int(s.get("compared", 0))
+    changed   = int(s.get("changed", 0))
+    only_ref  = int(s.get("only_ref", 0))
+    only_test = int(s.get("only_test", 0))
     return (f"Compared {compared} items. "
             f"Differences: {changed}. "
             f"Missing on profile: {only_ref}. "
             f"Extra on profile: {only_test}.")
 
-# ---- helpers for grouped (set-mode) diffs/matches ----
+# ----------------------------
+# Viz registries for ordering
+# ----------------------------
+
+VIZ_TOP = {
+    "chart": lambda name, sec, idx: (
+        render_bar_pair_block(name, sec, idx),
+        render_chart_table_block(name, sec, idx),
+    ),
+}
+
+VIZ_BOTTOM = {
+    "radar": lambda name, sec, idx: render_radar_block(name, sec, idx),
+}
+
+# ----------------------------
+# Buckets extraction for tables
+# ----------------------------
 
 def _filter_tuple_for_label(item: Any, key_label: str) -> Dict[str, Any]:
     if not isinstance(item, dict):
@@ -121,7 +159,7 @@ def format_group_value(v: Any) -> tags.span:
     return tags.span(str(v))
 
 def extract_buckets_for_report(section: Dict[str, Any]) -> Dict[str, Any]:
-    labels: Dict[str, str] = section.get("key_labels", {}) or {}
+    labels: Dict[str, str] = (section.get("key_labels") or section.get("labels")) or {}
     diffs = section.get("diffs", []) or []
 
     boolean_rows_raw = []
@@ -181,9 +219,11 @@ def extract_buckets_for_report(section: Dict[str, Any]) -> Dict[str, Any]:
         boolean_rows.append([item, bool_to_badge(ref_v), bool_to_badge(test_v)])
 
     if include_field_col:
-        string_rows = [[item, field, ref_v, test_v] for (item, field, ref_v, test_v) in sorted(string_rows_raw, key=lambda x: (x[0], x[1]))]
+        string_rows = [[item, field, ref_v, test_v] for (item, field, ref_v, test_v) in
+                       sorted(string_rows_raw, key=lambda x: (x[0], x[1]))]
     else:
-        string_rows = [[item, ref_v, test_v] for (item, _field, ref_v, test_v) in sorted(string_rows_raw, key=lambda x: x[0])]
+        string_rows = [[item, ref_v, test_v] for (item, _field, ref_v, test_v) in
+                       sorted(string_rows_raw, key=lambda x: x[0])]
 
     return {
         "boolean_rows": boolean_rows,
@@ -193,92 +233,192 @@ def extract_buckets_for_report(section: Dict[str, Any]) -> Dict[str, Any]:
         "extra_rows": sorted(extra_rows, key=lambda x: x[0]),
     }
 
-def _num(x: Any) -> Optional[float]:
-    try:
-        return float(x)
-    except Exception:
-        return None
-
-def _render_chart_svg(section_name: str, section: Dict[str, Any], idx: int):
-            # Delegated to viz.chart
-        return render_bar_pair_block(section_name, section, idx)
-
-def _render_chart_table(section_name: str, section: Dict[str, Any], idx: int):
-            # Delegated to viz.chart
-        return render_chart_table_block(section_name, section, idx)
+# ----------------------------
+# Module card renderer
+# ----------------------------
 
 def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
     state = state_enum(section.get("result", "WARN"))
-    divname = f"section_{idx}"
+    anchor_id = safe_id(section_name)
 
-    tags.h2(f"Module: {section_name}")
+    # Heading doubles as anchor target for navigation
+    tags.h2(f"Module: {section_name}", id=anchor_id)
     with tags.div():
-        render_status_dot(state)
-        tags.span(f"  {state.name}", style="margin-left:8px; font-weight:bold;")
+        # Keep title area clean; dots live in intro navigation
+        tags.span(f"{state.name}", style="font-weight:bold;")
 
-    stats_display = section.get("stats_display") or section.get("stats", {})
+    stats_display = (section.get("stats") or section.get("counts") or {})
     tags.p(fast_summary(stats_display))
 
-    types = (section.get("report", {}) or {}).get("types")
-    types = {t.lower() for t in types} if types else {"table"}
+    rep_cfg = section.get("report") or {}
+    types_ordered = [str(t).lower() for t in (rep_cfg.get("types") or []) if t]
 
-    if "chart" in types:
-        _render_chart_svg(section_name, section, idx)
-        _render_chart_table(section_name, section, idx)
+    # TOP viz
+    for t in types_ordered:
+        if t == "table":
+            continue
+        fn = VIZ_TOP.get(t)
+        if callable(fn):
+            fn(section_name, section, idx)
 
-    buckets = extract_buckets_for_report(section) if "table" in types else {
-        "boolean_rows": [], "string_rows": [], "string_include_field": False,
-        "missing_rows": [], "extra_rows": []
-    }
+    # TABLES
+    if "table" in types_ordered:
+        buckets = extract_buckets_for_report(section)
+        divname = f"section_{idx}"
 
-    if "table" in types and buckets["boolean_rows"]:
-        bdiv = show_hide_div(f"{divname}_bool", hide=False)
-        with bdiv:
-            tags.h3("Boolean / binary differences")
-            tags.p("If a capability is supported by the reference but not by the profile (or vice versa), the cards likely do not match.", cls="hint")
-            table(["Item", "Reference", "Profile"], buckets["boolean_rows"])
+        if buckets["boolean_rows"]:
+            with show_hide_div(f"{divname}_bool", hide=False):
+                tags.h3("Boolean / binary differences")
+                tags.p("If a capability is supported by the reference but not by the profile (or vice versa), "
+                       "the cards likely do not match.", cls="hint")
+                table(["Item", "Reference", "Profile"], buckets["boolean_rows"])
 
-    if "table" in types and buckets["string_rows"]:
-        sdiv = show_hide_div(f"{divname}_strings", hide=False)
-        with sdiv:
-            tags.h3("Differences in string fields")
-            headers = ["Item", "Field", "Reference", "Profile"] if buckets["string_include_field"] else ["Item", "Reference", "Profile"]
-            table(headers, buckets["string_rows"])
+        if buckets["string_rows"]:
+            with show_hide_div(f"{divname}_strings", hide=False):
+                tags.h3("Differences in string fields")
+                headers = ["Item", "Field", "Reference", "Profile"] if buckets["string_include_field"] else \
+                          ["Item", "Reference", "Profile"]
+                table(headers, buckets["string_rows"])
 
-    if "table" in types and buckets["missing_rows"]:
-        mdiv = show_hide_div(f"{divname}_missing", hide=True)
-        with mdiv:
-            tags.h3("Missing on profile (present in reference)")
-            table(["Item", "Detail"], buckets["missing_rows"])
+        if buckets["missing_rows"]:
+            with show_hide_div(f"{divname}_missing", hide=True):
+                tags.h3("Missing on profile (present in reference)")
+                table(["Item", "Detail"], buckets["missing_rows"])
 
-    if "table" in types and buckets["extra_rows"]:
-        ediv = show_hide_div(f"{divname}_extra", hide=True)
-        with ediv:
-            tags.h3("Extra on profile (absent in reference)")
-            table(["Item", "Detail"], buckets["extra_rows"])
+        if buckets["extra_rows"]:
+            with show_hide_div(f"{divname}_extra", hide=True):
+                tags.h3("Extra on profile (absent in reference)")
+                table(["Item", "Detail"], buckets["extra_rows"])
 
-    if section.get("matches"):
-        mv = show_hide_div(f"{divname}_matches", hide=True)
-        with mv:
-            tags.h3("Matches")
-            rows = []
-            labels = section.get("key_labels", {}) or {}
-            for m in section["matches"]:
-                item  = display_key(m.get("key"), labels)
-                field = m.get("field")
-                val   = m.get("value")
+        if section.get("matches"):
+            with show_hide_div(f"{divname}_matches", hide=True):
+                tags.h3("Matches")
+                rows = []
+                labels = (section.get("key_labels") or section.get("labels") or {})
+                for m in section["matches"]:
+                    item  = display_key(m.get("key"), labels)
+                    field = m.get("field")
+                    val   = m.get("value")
+                    if field == "__group__":
+                        pretty_field, val_node = "set", format_group_value(val)
+                    else:
+                        pretty_field = field
+                        val_node = bool_to_badge(val) if isinstance(val, bool) else tags.span("" if val is None else str(val))
+                    rows.append([item, pretty_field, val_node])
+                table(["Item", "Field", "Value"], rows)
 
-                if field == "__group__":
-                    pretty_field = "set"
-                    val_node = format_group_value(val)
-                else:
-                    pretty_field = field
-                    val_node = bool_to_badge(val) if isinstance(val, bool) else tags.span("" if val is None else str(val))
-
-                rows.append([item, pretty_field, val_node])
-            table(["Item", "Field", "Value"], rows)
+    # BOTTOM viz
+    for t in types_ordered:
+        fn = VIZ_BOTTOM.get(t)
+        if callable(fn):
+            fn(section_name, section, idx)
 
     tags.hr()
+
+# ----------------------------
+# Intro (left + right panels)
+# ----------------------------
+
+def render_intro_left(report: Dict[str, Any], *, overall_state: ContrastState, suspicions: int, src_path: str):
+    ref_name  = report.get("reference_name", "reference")
+    prof_name = report.get("profile_name", "profile")
+
+    tags.h1(f"Verification of {prof_name} against {ref_name}")
+    tags.p("Generated on: " + datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
+    tags.p("Generated from: " + src_path)
+
+    # Verification results + quick thresholds explainer
+    with tags.div():
+        tags.h2("Verification results")
+        with tags.span(
+            cls="circle",
+            style=("margin-left:8px; background:#333; color:#fff; width:18px; height:18px; "
+                   "line-height:18px; text-align:center; border-radius:50%; display:inline-block; "
+                   "position:relative; font-size:12px;")
+        ):
+            tags.span("i")
+            tags.span(
+                "WARN when changes are below configured thresholds; "
+                "SUSPICIOUS when changed/compared exceeds the ratio threshold or the change count exceeds the count threshold.",
+                cls="tooltiptext",
+                style="left:0; transform:translateX(-20%);"
+            )
+
+    # Clickable status dots (navigation)
+    with tags.div(id="modules"):
+        counts = {"MATCH": 0, "WARN": 0, "SUSPICIOUS": 0}
+        for name, sec in report.get("sections", {}).items():
+            st = state_enum(sec.get("result", "WARN"))
+            if st == ContrastState.MATCH:
+                counts["MATCH"] += 1
+            elif st == ContrastState.WARN:
+                counts["WARN"] += 1
+            else:
+                counts["SUSPICIOUS"] += 1
+            render_status_dot_link(section_name=name, state=st, target_id=safe_id(name))
+        tags.p(f"{counts['MATCH']} Match • {counts['WARN']} Warn • {counts['SUSPICIOUS']} Suspicious")
+
+    # Quick visibility buttons
+    tags.h3("Quick visibility settings")
+    show_all_button()
+    hide_all_button()
+    default_button()
+
+    # Jump-to-module dropdown (secondary nav)
+    sections = list(report.get("sections", {}).keys())
+    if sections:
+        with tags.div():
+            tags.label("Jump to module: ", _for="jumpMod")
+            sel = tags.select(id="jumpMod", onchange="location.hash=this.value")
+            for name in sections:
+                sel.add(tags.option(name, value=safe_id(name)))
+
+    # Narrative summary
+    tags.p(RESULT_TEXT[overall_state](suspicions))
+
+def render_intro_right(report: Dict[str, Any]):
+    dashboard = report.get("dashboard", {}) or {}
+    overall_counts = dashboard.get("overall_state_counts", {}) or {}
+
+    # totals for "matches vs diffs" + KPIs
+    sections = report.get("sections", {}) or {}
+    total_matched = total_diffs = total_compared = 0
+    for sec in sections.values():
+        s = (sec.get("stats") or sec.get("counts") or {})
+        total_matched += int(s.get("matched", 0) or 0)
+        total_diffs   += int(s.get("changed", 0) or 0) + int(s.get("only_ref", 0) or 0) + int(s.get("only_test", 0) or 0)
+        total_compared+= int(s.get("compared", 0) or 0)
+
+    with tags.div(_class="donut-stack"):
+        # Donut: distribution of module states
+        render_donut_block(
+            "Overall modules",
+            overall_counts,
+            segments=["MATCH","WARN","SUSPICIOUS"],
+            radius=52, stroke=18,
+            center_label=str(sum(int(overall_counts.get(k, 0) or 0) for k in ("MATCH","WARN","SUSPICIOUS"))),
+            legend_labels={"MATCH":"Match","WARN":"Warn","SUSPICIOUS":"Suspicious"},
+        )
+        # Donut: matches vs diffs (across all sections)
+        render_donut_block(
+            "Overall results (matches vs diffs)",
+            {"MATCH": total_matched, "WARN": total_diffs},
+            segments=["MATCH","WARN"],
+            radius=52, stroke=18,
+            legend_labels={"MATCH":"Matches","WARN":"Diffs"},
+        )
+        # KPI row
+        with tags.div(_class="kpi-row"):
+            with tags.div(_class="kpi"):
+                tags.div("Compared items", _class="kpi-title")
+                tags.div(str(total_compared), _class="kpi-value")
+            with tags.div(_class="kpi"):
+                tags.div("Total diffs", _class="kpi-title")
+                tags.div(str(total_diffs), _class="kpi-value")
+
+# ----------------------------
+# Main
+# ----------------------------
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -290,70 +430,49 @@ if __name__ == "__main__":
                         action="store", metavar="outfile",
                         required=False, default="comparison.html")
     parser.add_argument("-e", "--exclude-style-and-scripts",
-                        help="Link CSS/JS instead of inlining",
+                        help="Inline CSS/JS instead of linking to /data/",
                         action="store_true")
     args = parser.parse_args()
-
-    with open("data/script.js", "r", encoding="utf-8") as js, \
-         open("data/style.css",  "r", encoding="utf-8") as css:
-        script = "\n" + js.read() + "\n"
-        style  = "\n" + css.read() + "\n"
 
     with open(args.verification_profile, "r", encoding="utf-8") as f:
         report = json.load(f)
 
-    ref_name  = report.get("reference_name", "reference")
-    prof_name = report.get("profile_name", "profile")
     overall_state = state_enum(report.get("overall", "WARN"))
-
     suspicions = sum(
         1 for s in report.get("sections", {}).values()
         if state_enum(s.get("result", "WARN")).value >= ContrastState.WARN.value
     )
 
+    out_dir = "results"
+    rel_data_path = os.path.relpath("data", start=out_dir)
+
     doc = document(title="Comparison of smart cards")
 
     with doc.head:
         if args.exclude_style_and_scripts:
-            tags.link(rel="stylesheet", href="style.css")
-            tags.script(type="text/javascript", src="script.js")
+            with open("data/style.css", "r", encoding="utf-8") as css:
+                tags.style(raw(css.read()))
+            with open("data/script.js", "r", encoding="utf-8") as js:
+                tags.script(raw(js.read()), type="text/javascript")
         else:
-            tags.style(raw(style))
-            tags.script(raw(script), type="text/javascript")
+            tags.link(rel="stylesheet", href=os.path.join(rel_data_path, "style.css"))
+            tags.script(type="text/javascript", src=os.path.join(rel_data_path, "script.js"))
 
     with doc:
         tags.button("Back to Top", onclick="backToTop()", id="topButton", cls="floatingbutton")
 
-        # Intro
-        intro_div = tags.div(id="intro")
-        with intro_div:
-            tags.h1(f"Verification of {prof_name} against {ref_name}")
-            tags.p("Generated on: " + datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
-            tags.p("Generated from: " + args.verification_profile)
-            tags.h2("Verification results")
-            tags.h4("Ordered results from tested modules:")
+        # Intro grid
+        with tags.div(cls="intro-grid"):
+            with tags.div(cls="intro-left", id="intro"):
+                render_intro_left(report, overall_state=overall_state, suspicions=suspicions, src_path=args.verification_profile)
+            with tags.div(cls="intro-right"):
+                render_intro_right(report)
 
-        with tags.div(id="modules"):
-            for section_name, sec in report.get("sections", {}).items():
-                state = state_enum(sec.get("result", "WARN"))
-                with intro_div:
-                    render_status_dot(state)
-
-        # Sections
+        # Modules in order
         for idx, (section_name, sec) in enumerate(report.get("sections", {}).items()):
             render_module_card(section_name, sec, idx)
 
-        with intro_div:
-            tags.br()
-            tags.p(RESULT_TEXT[overall_state](suspicions))
-            tags.h3("Quick visibility settings")
-            show_all_button()
-            hide_all_button()
-            default_button()
-
-    out_dir = "results"
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, os.path.basename(args.output_file))
-
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(str(doc))

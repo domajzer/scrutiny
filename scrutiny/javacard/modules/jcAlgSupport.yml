@@ -12,7 +12,7 @@ defaults:
         dtype: string
         category: binary
   report:
-    types: ["table"]
+    types: ["table","radar"]
   component:
     comparator: basic
     match_key: name
