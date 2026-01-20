@@ -116,20 +116,14 @@ def _merge_severity_meta(schema: Dict[str, Any], section_name: str, section_res:
     out: Dict[str, Any] = {}
 
     if isinstance(schema, dict):
-        cmp_root = schema.get("compare", {})
-        if isinstance(cmp_root, dict):
-            sec = cmp_root.get(section_name, {})
-            if isinstance(sec, dict):
-                sev = sec.get("severity", {})
-                if isinstance(sev, dict):
-                    out.update(sev)
-        sections_root = schema.get("sections", {})
-        if isinstance(sections_root, dict):
-            sec = sections_root.get(section_name, {})
-            if isinstance(sec, dict):
-                sev = sec.get("severity", {})
-                if isinstance(sev, dict):
-                    out.update(sev)
+        sec = schema.get(section_name, {}) or {}
+        if isinstance(sec, dict):
+            comp = sec.get("component", {}) or {}
+            if isinstance(comp, dict):
+                if comp.get("threshold_ratio") is not None:
+                    out["threshold_ratio"] = comp.get("threshold_ratio")
+                if comp.get("threshold_count") is not None:
+                    out["threshold_count"] = comp.get("threshold_count")
 
     rep = section_res.get("report", {})
     if isinstance(rep, dict):
@@ -349,21 +343,20 @@ def assemble_report(
             pairs = _collect_pairs_from_rows(diffs, matches)
         radar_rows = _normalize_pairs(pairs)
 
-        # Report config (types)
-        rep_cfg = dict(res.get("report") or {})
-        explicit_types = rep_cfg.get("types")
-        if isinstance(explicit_types, list) and explicit_types:
-            types = [str(t) for t in explicit_types]
-        else:
+        # Report config (types) - STRICTLY from schema (YAML)
+        schema_sec = (schema.get(name, {}) or {}) if isinstance(schema, dict) else {}
+        schema_rep = dict(schema_sec.get("report", {}) or {})
+
+        res_rep = dict(res.get("report") or {})
+        rep_cfg = {**schema_rep, **res_rep}
+
+        explicit_types = schema_rep.get("types", None)
+
+        if explicit_types is None:
             types = []
-            if diffs or matches:
-                types.append("table")
-            if chart_rows:
-                types.append("chart")
-            if radar_rows:
-                types.append("radar")
-            if not types:
-                types = ["table"]
+        else:
+            types = [str(t).lower() for t in (explicit_types or [])]
+
         rep_cfg["types"] = types
 
         # Assemble section payload

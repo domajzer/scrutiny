@@ -448,15 +448,22 @@ if __name__ == "__main__":
 
     doc = document(title="Comparison of smart cards")
 
+    with open("data/script.js", "r", encoding="utf-8") as js, \
+        open("data/style.css", "r", encoding="utf-8") as css:
+        script = "\n" + js.read() + "\n"
+        style  = "\n" + css.read() + "\n"
+
+    doc = document(title="Comparison of smart cards")
+
     with doc.head:
         if args.exclude_style_and_scripts:
-            with open("data/style.css", "r", encoding="utf-8") as css:
-                tags.style(raw(css.read()))
-            with open("data/script.js", "r", encoding="utf-8") as js:
-                tags.script(raw(js.read()), type="text/javascript")
+            #(legacy)
+            tags.link(rel="stylesheet", href="style.css")
+            tags.script(type="text/javascript", src="script.js")
         else:
-            tags.link(rel="stylesheet", href=os.path.join(rel_data_path, "style.css"))
-            tags.script(type="text/javascript", src=os.path.join(rel_data_path, "script.js"))
+            #(single-file)
+            tags.style(raw(style))
+            tags.script(raw(script), type="text/javascript")
 
     with doc:
         tags.button("Back to Top", onclick="backToTop()", id="topButton", cls="floatingbutton")

@@ -193,7 +193,9 @@ class BasicComparator(Comparator):
         return {
             "section": section,
             "counts": counts,
+            "stats": counts,
             "labels": labels,
+            "key_labels": labels,
             "diffs": diffs,
             **({"matches": matches} if include_matches else {}),
             "artifacts": {},  # basic comparator has no special artifacts; HTML uses diffs/matches/labels

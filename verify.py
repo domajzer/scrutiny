@@ -12,6 +12,7 @@ from scrutiny import logging as slog
 from scrutiny.comparators.registry import get as get_comparator
 import scrutiny.comparators.basic_comparator
 import scrutiny.comparators.algperf_comparator
+import scrutiny.comparators.cplc_comparator
 
 from scrutiny.reporting.reporting import assemble_report
 

@@ -143,7 +143,9 @@ class AlgPerfComparator(Comparator):
         return {
             "section": section,
             "counts": counts,
+            "stats": counts,
             "labels": labels,
+            "key_labels": labels,
             "diffs": diffs,
             **({"matches": matches} if matches else {}),
             "artifacts": {"chart_rows": chart_rows},
