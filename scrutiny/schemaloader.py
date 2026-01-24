@@ -5,7 +5,7 @@ from copy import deepcopy
 from scrutiny import logging as slog
 
 _ALLOWED_CATEGORIES = {"ordinal", "nominal", "continuous", "binary", "set"}
-_SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.11"}
+_SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.11", "0.12"}
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -25,12 +25,12 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 class SchemaLoader:
     """
     Loads a YAML schema with:
-      schema_version: "0.1" | "0.11"
+      schema_version: "0.1" | "0.11" | "0.12"
       defaults: { data:..., report:..., component:..., target:... }
       sections:
         <name>:
           data: { type: list, record_schema: {...} }
-          report: { types: "table,bar" | ["table","bar"] | null }
+          report: { types: "table,bar" | ["table","bar"] | null, theme: light|dark }
           component: { comparator, match_key, show_key?, include_matches?, threshold_ratio?, threshold_count? }
           target: {}
     """
@@ -67,11 +67,19 @@ class SchemaLoader:
                 out[fname] = fcopy
             else:
                 self._warn_or_raise(
-                    f"Section '{section}': record_schema for field '{fname}' must be string or map.", fatal=True
+                    f"Section '{section}': record_schema for field '{fname}' must be string or map.",
+                    fatal=True
                 )
         return out
 
     def _parse_report_types(self, maybe_types: Any, section: str) -> List[str] | None:
+        """
+        Accept:
+          - null -> None
+          - "table,radar" -> ["table","radar"]
+          - ["table","radar"] -> ["table","radar"]
+          - {"types": ...} -> parsed types
+        """
         if maybe_types is None:
             return None
         if isinstance(maybe_types, dict):
@@ -85,13 +93,38 @@ class SchemaLoader:
         self._warn_or_raise(f"Section '{section}': report.types must be string/list/null.", fatal=True)
         return None
 
+    def _parse_theme(self, report_raw: Any, section: str) -> Optional[str]:
+        """
+        Accept theme only as a key inside a report mapping:
+          report: { theme: dark }
+        Returns "light"|"dark"|None.
+        """
+        if not isinstance(report_raw, dict):
+            return None
+        t = report_raw.get("theme", None)
+        if t is None:
+            return None
+        tt = str(t).strip().lower()
+        if tt not in {"light", "dark"}:
+            self._warn_or_raise(f"Section '{section}': report.theme must be 'light' or 'dark' if provided.", fatal=True)
+        return tt
+
     def _normalize_defaults(self, defaults: Dict[str, Any]) -> Dict[str, Any]:
         data = defaults.get("data", {}) or {}
         if data.get("type") and data["type"] != "list":
             self._warn_or_raise("defaults.data.type must be 'list' if provided.", fatal=True)
 
-        report_types = self._parse_report_types(defaults.get("report", {}).get("types", defaults.get("report")), "defaults")
-        report = {"types": report_types} if report_types is not None else {"types": None}
+        report_raw = defaults.get("report", {}) or {}
+        report_types = self._parse_report_types(
+            report_raw.get("types", report_raw) if isinstance(report_raw, dict) else report_raw,
+            "defaults"
+        )
+        theme = self._parse_theme(report_raw, "defaults")
+
+        report = {
+            "types": report_types if report_types is not None else None,
+            "theme": theme,
+        }
 
         comp = defaults.get("component", {}) or {}
         target = defaults.get("target", {}) or {}
@@ -133,7 +166,7 @@ class SchemaLoader:
             if not isinstance(section_cfg, dict):
                 self._warn_or_raise(f"Section '{section_name}' must be a mapping.", fatal=True)
 
-            merged = {}
+            merged: Dict[str, Any] = {}
             for bucket in ("data", "report", "component", "target"):
                 merged[bucket] = _deep_merge(defaults_norm.get(bucket, {}), section_cfg.get(bucket, {}))
 
@@ -150,8 +183,13 @@ class SchemaLoader:
             data = {"type": "list", "record_schema": record_schema_norm}
 
             # --- report ---
-            report_types = self._parse_report_types(merged["report"].get("types"), section_name)
-            report = {"types": report_types} if report_types is not None else {"types": None}
+            report_cfg = merged.get("report") or {}
+            report_types = self._parse_report_types(report_cfg.get("types", None), section_name)
+            theme = self._parse_theme(report_cfg, section_name)
+            report = {
+                "types": report_types if report_types is not None else None,
+                "theme": theme,
+            }
 
             # --- component ---
             comp_cfg = merged["component"] or {}
@@ -171,7 +209,8 @@ class SchemaLoader:
             show_key = comp_cfg.get("show_key", None)
             if show_key is not None and show_key not in record_schema_norm:
                 self._warn_or_raise(
-                    f"Section '{section_name}': component.show_key '{show_key}' not in data.record_schema; falling back to match_key '{match_key}'.",
+                    f"Section '{section_name}': component.show_key '{show_key}' not in data.record_schema; "
+                    f"falling back to match_key '{match_key}'.",
                     fatal=False
                 )
                 show_key = None

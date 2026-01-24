@@ -1,4 +1,4 @@
-schema_version: "0.11"
+schema_version: "0.12"
 
 defaults:
   data:
@@ -8,7 +8,9 @@ defaults:
     match_key: __override__
   target: {}
   report:
-    types: ["table"]
+    types: table
+    variation: cplc
+    theme: dark
 
 sections:
   ATR:

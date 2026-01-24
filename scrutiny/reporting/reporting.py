@@ -293,6 +293,16 @@ def assemble_report(
     sections_out: Dict[str, Any] = {}
     overall = "MATCH"
 
+    # Global theme (taken from schema; default light)
+    theme = "light"
+    if isinstance(schema, dict):
+        for _, cfg in schema.items():
+            rep = (cfg or {}).get("report") if isinstance(cfg, dict) else None
+            t = (rep or {}).get("theme") if isinstance(rep, dict) else None
+            if isinstance(t, str) and t.strip().lower() in {"light", "dark"}:
+                theme = t.strip().lower()
+                break
+
     # Overall dashboard counters
     overall_counts = {"MATCH": 0, "WARN": 0, "SUSPICIOUS": 0}
     by_section: Dict[str, Dict[str, int]] = {}
@@ -390,6 +400,7 @@ def assemble_report(
     return {
         "reference_name": reference_name,
         "profile_name": profile_name,
+        "theme": theme,
         "overall": overall,
         "sections": sections_out,
         "dashboard": dashboard,

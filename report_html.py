@@ -337,12 +337,14 @@ def render_intro_left(report: Dict[str, Any], *, overall_state: ContrastState, s
                    "position:relative; font-size:12px;")
         ):
             tags.span("i")
-            tags.span(
-                "WARN when changes are below configured thresholds; "
-                "SUSPICIOUS when changed/compared exceeds the ratio threshold or the change count exceeds the count threshold.",
-                cls="tooltiptext",
-                style="left:0; transform:translateX(-20%);"
-            )
+            with tags.span(cls="tooltiptext info", style="left:0; transform:translateX(-20%);"):
+                tags.span(RESULT_TEXT[overall_state](suspicions))
+                tags.br()
+                tags.br()
+                tags.span(
+                    "WARN when changes are below configured thresholds; "
+                    "SUSPICIOUS when changed/compared exceeds the ratio threshold or the change count exceeds the count threshold."
+                )
 
     # Clickable status dots (navigation)
     with tags.div(id="modules"):
@@ -357,7 +359,7 @@ def render_intro_left(report: Dict[str, Any], *, overall_state: ContrastState, s
                 counts["SUSPICIOUS"] += 1
             render_status_dot_link(section_name=name, state=st, target_id=safe_id(name))
         tags.p(f"{counts['MATCH']} Match • {counts['WARN']} Warn • {counts['SUSPICIOUS']} Suspicious")
-
+    
     # Quick visibility buttons
     tags.h3("Quick visibility settings")
     show_all_button()
@@ -372,9 +374,6 @@ def render_intro_left(report: Dict[str, Any], *, overall_state: ContrastState, s
             sel = tags.select(id="jumpMod", onchange="location.hash=this.value")
             for name in sections:
                 sel.add(tags.option(name, value=safe_id(name)))
-
-    # Narrative summary
-    tags.p(RESULT_TEXT[overall_state](suspicions))
 
 def render_intro_right(report: Dict[str, Any]):
     dashboard = report.get("dashboard", {}) or {}
@@ -437,6 +436,10 @@ if __name__ == "__main__":
     with open(args.verification_profile, "r", encoding="utf-8") as f:
         report = json.load(f)
 
+    theme = str(report.get("theme", "light")).strip().lower()
+    if theme not in {"light", "dark"}:
+        theme = "light"
+
     overall_state = state_enum(report.get("overall", "WARN"))
     suspicions = sum(
         1 for s in report.get("sections", {}).values()
@@ -464,6 +467,8 @@ if __name__ == "__main__":
             #(single-file)
             tags.style(raw(style))
             tags.script(raw(script), type="text/javascript")
+
+        doc.body["data-theme"] = theme
 
     with doc:
         tags.button("Back to Top", onclick="backToTop()", id="topButton", cls="floatingbutton")
