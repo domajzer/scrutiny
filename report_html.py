@@ -12,7 +12,7 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from dominate import document, tags
 from dominate.util import raw
@@ -21,10 +21,10 @@ from scrutiny.htmlutils import show_hide_div, show_all_button, hide_all_button, 
 from scrutiny.interfaces import ContrastState
 
 # Modular viz
-from scrutiny.reporting.viz.table import render_table_block
-from scrutiny.reporting.viz.chart import render_bar_pair_block, render_chart_table_block
-from scrutiny.reporting.viz.radar import render_radar_block
-from scrutiny.reporting.viz.donut import render_donut_block
+from scrutiny.reporting.viz.table import render_table_block, render_table_variant
+from scrutiny.reporting.viz.chart import render_chart_variant
+from scrutiny.reporting.viz.radar import render_radar_variant
+from scrutiny.reporting.viz.donut import render_donut_variant
 
 # ----------------------------
 # Texts & small helpers
@@ -35,6 +35,7 @@ TOOLTIP_TEXT = {
     ContrastState.WARN: "There seem to be some differences worth checking",
     ContrastState.SUSPICIOUS: "Devices probably don't match",
 }
+
 RESULT_TEXT = {
     ContrastState.MATCH: lambda x:
         "None of the modules raised suspicion during the verification process.",
@@ -58,14 +59,17 @@ def state_enum(s: str) -> ContrastState:
 def render_status_dot_link(*, section_name: str, state: ContrastState, target_id: str):
     """
     Clickable status dot used in the intro strip:
-      - hover shows module name
+      - hover shows module name + state meaning
       - click jumps to the module card
     """
+    tip = TOOLTIP_TEXT.get(state, "")
     with tags.a(cls="dot " + state.name.lower(), href=f"#{target_id}", title=section_name):
-        tags.span(section_name, cls="tooltiptext " + state.name.lower())
+        # Tooltip text (module name + meaning)
+        tooltip = f"{section_name} — {tip}" if tip else section_name
+        tags.span(tooltip, cls="tooltiptext " + state.name.lower())
 
 def table(headers: Iterable[str], rows: Iterable[Iterable[Any]]):
-    return render_table_block(headers, rows)
+    return render_table_block(list(headers), list(rows))
 
 def badge(text: str, kind: str) -> tags.span:
     return tags.span(text, cls=f"badge badge-{kind}")
@@ -74,8 +78,10 @@ def bool_to_badge(value: Any) -> tags.span:
     if isinstance(value, bool):
         return badge("Supported", "ok") if value else badge("Unsupported", "bad")
     sval = str(value).strip().lower()
-    if sval in {"true", "yes", "supported"}: return badge("Supported", "ok")
-    if sval in {"false", "no", "unsupported"}: return badge("Unsupported", "bad")
+    if sval in {"true", "yes", "supported"}:
+        return badge("Supported", "ok")
+    if sval in {"false", "no", "unsupported"}:
+        return badge("Unsupported", "bad")
     return badge("Unknown", "neutral")
 
 def display_key(raw_key: Any, labels: Dict[str, str]) -> str:
@@ -86,32 +92,98 @@ def display_key(raw_key: Any, labels: Dict[str, str]) -> str:
 
 def fast_summary(stats_or_counts: Dict[str, Any]) -> str:
     s = stats_or_counts or {}
-    compared  = int(s.get("compared", 0))
-    changed   = int(s.get("changed", 0))
-    only_ref  = int(s.get("only_ref", 0))
-    only_test = int(s.get("only_test", 0))
+    compared = int(s.get("compared", 0) or 0)
+    changed = int(s.get("changed", 0) or 0)
+    only_ref = int(s.get("only_ref", 0) or 0)
+    only_test = int(s.get("only_test", 0) or 0)
     return (f"Compared {compared} items. "
             f"Differences: {changed}. "
             f"Missing on profile: {only_ref}. "
             f"Extra on profile: {only_test}.")
 
 # ----------------------------
+# README/doc rendering
+# ----------------------------
+
+_link_pat = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def _render_paragraph_with_links(text: str) -> None:
+    """Render a paragraph, supporting minimal [text](url) link syntax."""
+    if not text:
+        return
+    with tags.p():
+        pos = 0
+        for m in _link_pat.finditer(text):
+            if m.start() > pos:
+                tags.span(text[pos:m.start()])
+            label = (m.group(1) or "").strip() or (m.group(2) or "").strip()
+            href = (m.group(2) or "").strip()
+            if href:
+                tags.a(label, href=href, target="_blank", rel="noopener noreferrer")
+            else:
+                tags.span(label)
+            pos = m.end()
+        if pos < len(text):
+            tags.span(text[pos:])
+
+def render_doc_text(doc_text: str) -> None:
+    """Render doc_text as paragraphs split by blank lines."""
+    if not doc_text:
+        return
+    chunks = [c.strip() for c in re.split(r"\n\s*\n", str(doc_text).replace("\r\n", "\n"))]
+    for c in chunks:
+        if c:
+            _render_paragraph_with_links(c)
+
+# ----------------------------
 # Viz registries for ordering
 # ----------------------------
 
 VIZ_TOP = {
-    "chart": lambda name, sec, idx: (
-        render_bar_pair_block(name, sec, idx),
-        render_chart_table_block(name, sec, idx),
+    "chart": lambda name, sec, idx, variant=None: render_chart_variant(
+        section_name=name, section=sec, idx=idx, variant=variant
     ),
 }
 
 VIZ_BOTTOM = {
-    "radar": lambda name, sec, idx: render_radar_block(name, sec, idx),
+    "radar": lambda name, sec, idx, variant=None: render_radar_variant(
+        section_name=name, section=sec, idx=idx, variant=variant
+    ),
 }
 
 # ----------------------------
-# Buckets extraction for tables
+# Report types normalization
+# ----------------------------
+
+def normalize_report_types(rep_cfg: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
+    """
+    Normalize rep_cfg['types'] into a list of (type, variant).
+
+    Accepts:
+      - ["table","radar"]
+      - [{"type":"table","variant":"cplc"}, {"type":"radar"}]
+    """
+    raw_types = rep_cfg.get("types") or []
+    out: List[Tuple[str, Optional[str]]] = []
+    for t in raw_types:
+        if t is None:
+            continue
+        if isinstance(t, dict):
+            tp = str(t.get("type") or "").strip().lower()
+            if not tp:
+                continue
+            v = t.get("variant")
+            v = str(v).strip().lower() if v is not None and str(v).strip() else None
+            out.append((tp, v))
+        else:
+            tp = str(t).strip().lower()
+            if tp:
+                out.append((tp, None))
+    return out
+
+# ----------------------------
+# Buckets extraction for default tables
 # ----------------------------
 
 def _filter_tuple_for_label(item: Any, key_label: str) -> Dict[str, Any]:
@@ -163,9 +235,9 @@ def extract_buckets_for_report(section: Dict[str, Any]) -> Dict[str, Any]:
     diffs = section.get("diffs", []) or []
 
     boolean_rows_raw = []
-    string_rows_raw  = []
-    missing_rows     = []
-    extra_rows       = []
+    string_rows_raw = []
+    missing_rows = []
+    extra_rows = []
     grouped: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
 
     for d in diffs:
@@ -237,7 +309,7 @@ def extract_buckets_for_report(section: Dict[str, Any]) -> Dict[str, Any]:
 # Module card renderer
 # ----------------------------
 
-def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
+def render_module_card(section_name: str, section: Dict[str, Any], idx: int, *, ref_name: str, prof_name: str):
     state = state_enum(section.get("result", "WARN"))
     anchor_id = safe_id(section_name)
 
@@ -247,22 +319,50 @@ def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
         # Keep title area clean; dots live in intro navigation
         tags.span(f"{state.name}", style="font-weight:bold;")
 
+    # Optional per-module README / doc_text
+    rep_cfg = section.get("report") or {}
+    doc_text = (rep_cfg.get("doc_text") or "").strip()
+    if doc_text:
+        with tags.div(cls="module-doc"):
+            render_doc_text(doc_text)
+
     stats_display = (section.get("stats") or section.get("counts") or {})
     tags.p(fast_summary(stats_display))
 
-    rep_cfg = section.get("report") or {}
-    types_ordered = [str(t).lower() for t in (rep_cfg.get("types") or []) if t]
+    types_ordered = normalize_report_types(rep_cfg)
 
     # TOP viz
-    for t in types_ordered:
+    for (t, v) in types_ordered:
         if t == "table":
             continue
         fn = VIZ_TOP.get(t)
         if callable(fn):
-            fn(section_name, section, idx)
+            fn(section_name, section, idx, v)
 
     # TABLES
-    if "table" in types_ordered:
+    table_variant = None
+    if any(t == "table" for (t, _v) in types_ordered):
+        # If table appears multiple times, last one wins (simple policy)
+        for (t, v) in types_ordered:
+            if t == "table":
+                table_variant = v
+
+        # If a table variant exists and is known, render it and skip generic tables.
+        node = render_table_variant(
+            section_name=section_name,
+            section=section,
+            ref_name=ref_name,
+            prof_name=prof_name,
+            variant=table_variant,
+        )
+        if node is not None:
+            # Variant rendered (e.g. CPLC side-by-side)
+            container = tags.div()
+            container.add(node)
+            tags.hr()
+            return
+
+        # Default (generic) diff tables:
         buckets = extract_buckets_for_report(section)
         divname = f"section_{idx}"
 
@@ -296,22 +396,31 @@ def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
                 rows = []
                 labels = (section.get("key_labels") or section.get("labels") or {})
                 for m in section["matches"]:
-                    item  = display_key(m.get("key"), labels)
+                    item = display_key(m.get("key"), labels)
                     field = m.get("field")
-                    val   = m.get("value")
+
+                    # Skip noisy boolean matches (jcAIDScan: isSupported repeats a lot). Honestly,I have no idea how to fix this. It is midnight and I dont have a clue #TODO
+                    if field is not None and str(field).strip().lower() == "issupported":
+                        continue
+
+                    val = m.get("value")
                     if field == "__group__":
                         pretty_field, val_node = "set", format_group_value(val)
                     else:
                         pretty_field = field
                         val_node = bool_to_badge(val) if isinstance(val, bool) else tags.span("" if val is None else str(val))
                     rows.append([item, pretty_field, val_node])
-                table(["Item", "Field", "Value"], rows)
+
+                if rows:
+                    table(["Item", "Field", "Value"], rows)
+                else:
+                    tags.p("No relevant matches to display (filtered noisy fields).")
 
     # BOTTOM viz
-    for t in types_ordered:
+    for (t, v) in types_ordered:
         fn = VIZ_BOTTOM.get(t)
         if callable(fn):
-            fn(section_name, section, idx)
+            fn(section_name, section, idx, v)
 
     tags.hr()
 
@@ -320,14 +429,14 @@ def render_module_card(section_name: str, section: Dict[str, Any], idx: int):
 # ----------------------------
 
 def render_intro_left(report: Dict[str, Any], *, overall_state: ContrastState, suspicions: int, src_path: str):
-    ref_name  = report.get("reference_name", "reference")
+    ref_name = report.get("reference_name", "reference")
     prof_name = report.get("profile_name", "profile")
 
     tags.h1(f"Verification of {prof_name} against {ref_name}")
     tags.p("Generated on: " + datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
     tags.p("Generated from: " + src_path)
 
-    # Verification results + quick thresholds explainer
+    # Verification results: put BOTH result message + methodology inside tooltip
     with tags.div():
         tags.h2("Verification results")
         with tags.span(
@@ -337,13 +446,19 @@ def render_intro_left(report: Dict[str, Any], *, overall_state: ContrastState, s
                    "position:relative; font-size:12px;")
         ):
             tags.span("i")
-            with tags.span(cls="tooltiptext info", style="left:0; transform:translateX(-20%);"):
+            with tags.span(
+                cls="tooltiptext info",
+                style="left:0; transform:translateX(-20%);"
+            ):
+                tags.strong("Result: ")
                 tags.span(RESULT_TEXT[overall_state](suspicions))
                 tags.br()
                 tags.br()
+                tags.strong("Methodology: ")
                 tags.span(
                     "WARN when changes are below configured thresholds; "
-                    "SUSPICIOUS when changed/compared exceeds the ratio threshold or the change count exceeds the count threshold."
+                    "SUSPICIOUS when changed/compared exceeds the ratio threshold "
+                    "or the change count exceeds the count threshold."
                 )
 
     # Clickable status dots (navigation)
@@ -359,7 +474,7 @@ def render_intro_left(report: Dict[str, Any], *, overall_state: ContrastState, s
                 counts["SUSPICIOUS"] += 1
             render_status_dot_link(section_name=name, state=st, target_id=safe_id(name))
         tags.p(f"{counts['MATCH']} Match • {counts['WARN']} Warn • {counts['SUSPICIOUS']} Suspicious")
-    
+
     # Quick visibility buttons
     tags.h3("Quick visibility settings")
     show_all_button()
@@ -385,26 +500,29 @@ def render_intro_right(report: Dict[str, Any]):
     for sec in sections.values():
         s = (sec.get("stats") or sec.get("counts") or {})
         total_matched += int(s.get("matched", 0) or 0)
-        total_diffs   += int(s.get("changed", 0) or 0) + int(s.get("only_ref", 0) or 0) + int(s.get("only_test", 0) or 0)
-        total_compared+= int(s.get("compared", 0) or 0)
+        total_diffs += int(s.get("changed", 0) or 0) + int(s.get("only_ref", 0) or 0) + int(s.get("only_test", 0) or 0)
+        total_compared += int(s.get("compared", 0) or 0)
 
     with tags.div(_class="donut-stack"):
         # Donut: distribution of module states
-        render_donut_block(
+        render_donut_variant(
             "Overall modules",
             overall_counts,
-            segments=["MATCH","WARN","SUSPICIOUS"],
+            segments=["MATCH", "WARN", "SUSPICIOUS"],
             radius=52, stroke=18,
-            center_label=str(sum(int(overall_counts.get(k, 0) or 0) for k in ("MATCH","WARN","SUSPICIOUS"))),
-            legend_labels={"MATCH":"Match","WARN":"Warn","SUSPICIOUS":"Suspicious"},
+            center_label=str(sum(int(overall_counts.get(k, 0) or 0) for k in ("MATCH", "WARN", "SUSPICIOUS"))),
+            legend_labels={"MATCH": "Match", "WARN": "Warn", "SUSPICIOUS": "Suspicious"},
+            variant=None,
         )
         # Donut: matches vs diffs (across all sections)
-        render_donut_block(
+        render_donut_variant(
             "Overall results (matches vs diffs)",
             {"MATCH": total_matched, "WARN": total_diffs},
-            segments=["MATCH","WARN"],
+            segments=["MATCH", "WARN"],
             radius=52, stroke=18,
-            legend_labels={"MATCH":"Matches","WARN":"Diffs"},
+            center_label=str(total_compared), 
+            legend_labels={"MATCH": "Matches", "WARN": "Diffs"},
+            variant=None,
         )
         # KPI row
         with tags.div(_class="kpi-row"):
@@ -436,10 +554,6 @@ if __name__ == "__main__":
     with open(args.verification_profile, "r", encoding="utf-8") as f:
         report = json.load(f)
 
-    theme = str(report.get("theme", "light")).strip().lower()
-    if theme not in {"light", "dark"}:
-        theme = "light"
-
     overall_state = state_enum(report.get("overall", "WARN"))
     suspicions = sum(
         1 for s in report.get("sections", {}).values()
@@ -447,42 +561,49 @@ if __name__ == "__main__":
     )
 
     out_dir = "results"
-    rel_data_path = os.path.relpath("data", start=out_dir)
 
-    doc = document(title="Comparison of smart cards")
-
-    with open("data/script.js", "r", encoding="utf-8") as js, \
-        open("data/style.css", "r", encoding="utf-8") as css:
+    # Load CSS/JS
+    with open("data/script.js", "r", encoding="utf-8") as js, open("data/style.css", "r", encoding="utf-8") as css:
         script = "\n" + js.read() + "\n"
-        style  = "\n" + css.read() + "\n"
+        style = "\n" + css.read() + "\n"
 
     doc = document(title="Comparison of smart cards")
 
     with doc.head:
         if args.exclude_style_and_scripts:
-            #(legacy)
+            # link mode (legacy)
             tags.link(rel="stylesheet", href="style.css")
             tags.script(type="text/javascript", src="script.js")
         else:
-            #(single-file)
+            # inline mode (single-file)
             tags.style(raw(style))
             tags.script(raw(script), type="text/javascript")
 
+    with doc:
+        theme = str(report.get("theme", "light")).strip().lower()
+        if theme not in {"light", "dark"}:
+            theme = "light"
         doc.body["data-theme"] = theme
 
-    with doc:
         tags.button("Back to Top", onclick="backToTop()", id="topButton", cls="floatingbutton")
 
         # Intro grid
         with tags.div(cls="intro-grid"):
             with tags.div(cls="intro-left", id="intro"):
-                render_intro_left(report, overall_state=overall_state, suspicions=suspicions, src_path=args.verification_profile)
+                render_intro_left(
+                    report,
+                    overall_state=overall_state,
+                    suspicions=suspicions,
+                    src_path=args.verification_profile
+                )
             with tags.div(cls="intro-right"):
                 render_intro_right(report)
 
         # Modules in order
+        ref_name = report.get("reference_name", "reference")
+        prof_name = report.get("profile_name", "profile")
         for idx, (section_name, sec) in enumerate(report.get("sections", {}).items()):
-            render_module_card(section_name, sec, idx)
+            render_module_card(section_name, sec, idx, ref_name=ref_name, prof_name=prof_name)
 
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, os.path.basename(args.output_file))

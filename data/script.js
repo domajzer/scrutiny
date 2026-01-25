@@ -1,9 +1,9 @@
 /**
- * Based on https://www.w3schools.com/howto/tryit.asp?filename=tryhow_js_toggle_hide_show
- * @param {*} id id of element to hide
+ * Toggle a single block by id (Show/Hide button)
  */
 function hideButton(id) {
   var x = document.getElementById(id);
+  if (!x) return;
   if (x.style.display === "none") {
     x.style.display = "block";
   } else {
@@ -12,31 +12,46 @@ function hideButton(id) {
 }
 
 /**
- * @param {*} ids array of ids of elements to show
+ * Legacy helpers (kept for backward compatibility)
  */
 function showAll(ids) {
+  if (!ids) return;
   ids.forEach(function(id) {
-    document.getElementById(id).style.display = "block";
+    var el = document.getElementById(id);
+    if (el) el.style.display = "block";
   });
 }
 
-/**
- * @param {*} ids array of ids of elements to hide
- */
 function hideAll(ids) {
+  if (!ids) return;
   ids.forEach(function(id) {
-    document.getElementById(id).style.display = "none";
+    var el = document.getElementById(id);
+    if (el) el.style.display = "none";
   });
 }
 
-/**
- * 
- * @param {*} shown  array of ids of elements to show
- * @param {*} hidden array of ids of elements to hide
- */
 function defaultAll(shown, hidden) {
   showAll(shown);
   hideAll(hidden);
+}
+
+function showAllToggles() {
+  document.querySelectorAll(".toggle-block").forEach(function(el) {
+    el.style.display = "block";
+  });
+}
+
+function hideAllToggles() {
+  document.querySelectorAll(".toggle-block").forEach(function(el) {
+    el.style.display = "none";
+  });
+}
+
+function defaultToggles() {
+  document.querySelectorAll(".toggle-block").forEach(function(el) {
+    var def = (el.getAttribute("data-default") || "show").toLowerCase();
+    el.style.display = (def === "hide") ? "none" : "block";
+  });
 }
 
 // Floating button based on https://www.w3schools.com/howto/howto_js_scroll_to_top.asp
@@ -44,6 +59,7 @@ window.onscroll = showHideScrollButton;
 
 function showHideScrollButton() {
   var topButton = document.getElementById("topButton");
+  if (!topButton) return;
   if (document.body.scrollTop > 20 || document.documentElement.scrollTop > 20) {
     topButton.style.display = "block";
   } else {
@@ -62,9 +78,13 @@ function backToTop() {
 function displayImage(imgs, expandedImageID, imageTextID) {
   var expandImg = document.getElementById(expandedImageID);
   var imgText = document.getElementById(imageTextID);
+  if (!expandImg || !imgText) return;
+
   expandImg.src = imgs.src;
   imgText.innerHTML = imgs.alt;
-  expandImg.parentElement.style.display = "block";
+  if (expandImg.parentElement) {
+    expandImg.parentElement.style.display = "block";
+  }
 }
 
 /* Gallery end */

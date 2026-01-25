@@ -30,11 +30,7 @@ def _max_state(a: str, b: str) -> str:
 # --------------------------- severity policy ---------------------------
 
 def compute_severity(meta: dict, changed: int, compared: int) -> str:
-    """
-    Severity decision:
-      - MATCH if no items or no changes
-      - else apply (ratio or count) threshold, falling back to WARN
-    """
+    """Return MATCH/WARN/SUSPICIOUS based on thresholds."""
     if compared == 0 or changed == 0:
         return "MATCH"
 
@@ -87,7 +83,6 @@ def _tally_stats(diffs: List[Dict[str, Any]], matches: List[Dict[str, Any]]) -> 
                 elif t and not r:
                     only_test += 1
                 else:
-                    # both True/False → treat as generic change (defensive)
                     changed += 1
             else:
                 changed += 1
@@ -189,11 +184,9 @@ def _collect_pairs_from_rows(diffs: List[Dict[str, Any]], matches: List[Dict[str
     buf: Dict[str, Dict[str, Any]] = {}
     for d in diffs or []:
         key = str(d.get("key", ""))
-        ref_v = d.get("ref")
-        tst_v = d.get("test")
         buf.setdefault(key, {})
-        buf[key]["ref_raw"] = buf[key].get("ref_raw", ref_v)
-        buf[key]["test_raw"] = buf[key].get("test_raw", tst_v)
+        buf[key]["ref_raw"] = buf[key].get("ref_raw", d.get("ref"))
+        buf[key]["test_raw"] = buf[key].get("test_raw", d.get("test"))
     for m in matches or []:
         key = str(m.get("key", ""))
         v = m.get("value")
@@ -271,6 +264,51 @@ def _normalize_pairs(pairs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+# --------------------------- report config helpers ---------------------------
+
+def _normalize_types_from_schema(explicit_types: Any) -> List[Dict[str, Any]]:
+    """SchemaLoader should already normalize this, but keep it defensive."""
+    if explicit_types is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    if isinstance(explicit_types, list):
+        for t in explicit_types:
+            if isinstance(t, str):
+                s = t.strip().lower()
+                if s:
+                    out.append({"type": s, "variant": None})
+            elif isinstance(t, dict):
+                tp = str(t.get("type") or "").strip().lower()
+                if not tp:
+                    continue
+                v = t.get("variant")
+                v = str(v).strip().lower() if v is not None and str(v).strip() else None
+                out.append({"type": tp, "variant": v})
+    elif isinstance(explicit_types, str):
+        for x in explicit_types.split(","):
+            s = x.strip().lower()
+            if s:
+                out.append({"type": s, "variant": None})
+    return out
+
+
+def _pick_global_theme(schema: Dict[str, Any]) -> str:
+    """Find first non-null report.theme in schema, else 'light'."""
+    if not isinstance(schema, dict):
+        return "light"
+    for _name, sec in schema.items():
+        if not isinstance(sec, dict):
+            continue
+        rep = sec.get("report") or {}
+        if isinstance(rep, dict):
+            t = rep.get("theme")
+            if isinstance(t, str) and t.strip():
+                tt = t.strip().lower()
+                if tt in {"light", "dark"}:
+                    return tt
+    return "light"
+
+
 # --------------------------- main entrypoint ---------------------------
 
 def assemble_report(
@@ -281,31 +319,15 @@ def assemble_report(
     profile_name: str,
     section_rows: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """
-    Normalize comparator outputs and compute the final JSON used by the HTML layer.
-    Adds:
-      - stats per section
-      - severity per section
-      - chart_rows promotion (from artifacts)
-      - radar_rows (normalized 0..1 scores; supports bool/int/float)
-      - dashboard.overall_state_counts and dashboard.by_section (future-proof per-section donuts)
-    """
+    """Build the normalized report JSON used by the HTML layer."""
+
     sections_out: Dict[str, Any] = {}
     overall = "MATCH"
 
-    # Global theme (taken from schema; default light)
-    theme = "light"
-    if isinstance(schema, dict):
-        for _, cfg in schema.items():
-            rep = (cfg or {}).get("report") if isinstance(cfg, dict) else None
-            t = (rep or {}).get("theme") if isinstance(rep, dict) else None
-            if isinstance(t, str) and t.strip().lower() in {"light", "dark"}:
-                theme = t.strip().lower()
-                break
-
-    # Overall dashboard counters
     overall_counts = {"MATCH": 0, "WARN": 0, "SUSPICIOUS": 0}
     by_section: Dict[str, Dict[str, int]] = {}
+
+    theme = _pick_global_theme(schema)
 
     for name, res in (compare_results or {}).items():
         diffs = res.get("diffs", []) or []
@@ -319,17 +341,17 @@ def assemble_report(
         if not isinstance(chart_rows, list):
             chart_rows = []
 
-        # Stats (use provided; recompute if zeros while we have rows)
+        # Stats
         provided_stats = res.get("stats")
         if isinstance(provided_stats, dict):
             stats = {
                 "compared": int(provided_stats.get("compared", 0) or 0),
-                "changed":  int(provided_stats.get("changed", 0) or 0),
-                "matched":  int(provided_stats.get("matched", 0) or 0),
+                "changed": int(provided_stats.get("changed", 0) or 0),
+                "matched": int(provided_stats.get("matched", 0) or 0),
                 "only_ref": int(provided_stats.get("only_ref", 0) or 0),
-                "only_test":int(provided_stats.get("only_test", 0) or 0),
+                "only_test": int(provided_stats.get("only_test", 0) or 0),
             }
-            if (stats["compared"] == 0 and (diffs or matches)):
+            if stats["compared"] == 0 and (diffs or matches):
                 stats = _tally_stats(diffs, matches)
         else:
             stats = _tally_stats(diffs, matches)
@@ -338,7 +360,6 @@ def assemble_report(
         sev_meta = _merge_severity_meta(schema, name, res)
         result = compute_severity(sev_meta, stats["changed"], stats["compared"])
 
-        # Accumulate dashboard counts
         overall_counts[result] = overall_counts.get(result, 0) + 1
         by_section[name] = {
             "MATCH": 1 if result == "MATCH" else 0,
@@ -347,44 +368,47 @@ def assemble_report(
             "TOTAL": 1,
         }
 
-        # Radar rows (from chart_rows first, else from diffs/matches)
         pairs = _collect_numeric_pairs_from_chart(chart_rows)
         if not pairs:
             pairs = _collect_pairs_from_rows(diffs, matches)
         radar_rows = _normalize_pairs(pairs)
 
-        # Report config (types) - STRICTLY from schema (YAML)
+        # -------------------- Report config (STRICTLY from schema) --------------------
         schema_sec = (schema.get(name, {}) or {}) if isinstance(schema, dict) else {}
         schema_rep = dict(schema_sec.get("report", {}) or {})
 
+        # Allow comparator to override *non-type* report fields if needed
         res_rep = dict(res.get("report") or {})
         rep_cfg = {**schema_rep, **res_rep}
 
         explicit_types = schema_rep.get("types", None)
+        rep_cfg["types"] = _normalize_types_from_schema(explicit_types)
 
-        if explicit_types is None:
-            types = []
-        else:
-            types = [str(t).lower() for t in (explicit_types or [])]
+        if "doc_text" in schema_rep and schema_rep.get("doc_text"):
+            rep_cfg["doc_text"] = schema_rep.get("doc_text")
 
-        rep_cfg["types"] = types
+        if rep_cfg.get("theme") is None:
+            rep_cfg["theme"] = theme
 
-        # Assemble section payload
+        src_rows = None
+        if isinstance(section_rows, dict):
+            src_rows = section_rows.get(name)
+
         sections_out[name] = {
             "result": result,
             "stats": stats,
-            "stats_display": dict(stats),  # presentation may format
-            "key_labels": res.get("key_labels") or {},
+            "stats_display": dict(stats),
+            "key_labels": res.get("key_labels") or res.get("labels") or {},
             "diffs": diffs,
             "matches": matches,
             "chart_rows": chart_rows,
             "radar_rows": radar_rows,
             "report": rep_cfg,
+            **({"source_rows": src_rows} if src_rows is not None else {}),
         }
 
         overall = _max_state(overall, result)
 
-    # Final dashboard block (for overview donuts/cards)
     total_sections = sum(overall_counts.values())
     dashboard = {
         "overall_state_counts": {
@@ -393,7 +417,6 @@ def assemble_report(
             "SUSPICIOUS": overall_counts.get("SUSPICIOUS", 0),
             "TOTAL": total_sections,
         },
-        # Future-proof: per-section counts (each totals 1)
         "by_section": by_section,
     }
 

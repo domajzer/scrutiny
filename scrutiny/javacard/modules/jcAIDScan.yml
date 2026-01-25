@@ -7,7 +7,6 @@ defaults:
     types: ["table"]
   component:
     comparator: basic
-    match_key: __override__     
     include_matches: true
     threshold_ratio: 0
     threshold_count: 0

@@ -126,7 +126,7 @@ def main():
         compare_results=all_results,
         reference_name="reference",
         profile_name="profile",
-        section_rows=section_rows, 
+        section_rows=section_rows,
     )
 
     slog.log_step("Writing output JSON:", args.output_file)

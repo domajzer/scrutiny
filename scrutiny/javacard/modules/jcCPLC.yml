@@ -8,8 +8,6 @@ defaults:
     match_key: __override__
   target: {}
   report:
-    types: table
-    variation: cplc
     theme: dark
 
 sections:
@@ -23,6 +21,9 @@ sections:
       match_key: name
       show_key: name
       include_matches: true
+    report:
+      types: ["table"]
+      doc: docs/cplc.txt
 
   CPLC:
     data:
@@ -37,3 +38,7 @@ sections:
     target:
       value_field: value
       compare_first_token: true
+    report:
+      types:
+        - type: table
+          variant: cplc

@@ -4,7 +4,6 @@ from dominate import tags
 from dominate.util import raw
 import html
 
-
 def _num(v):
     try:
         return float(v)
@@ -35,7 +34,6 @@ def render_bar_pair_block(section_name: str, section: Dict[str, Any], idx: int):
     if not rows:
         return tags.div()
 
-    # Layout tuned to match previous visuals
     pad_x = 14
     pad_y = 12
     label_w = 320         # room for long labels on left
@@ -46,7 +44,6 @@ def render_bar_pair_block(section_name: str, section: Dict[str, Any], idx: int):
     row_total = row_block + row_gap     # including gap
     legend_h = 18
 
-    # Scale domain from actual numeric values
     values = []
     for r in rows:
         ra = _num(r.get("ref_avg"))
